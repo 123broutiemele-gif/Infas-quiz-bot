@@ -1,5 +1,6 @@
 import os, json, asyncio
 import google.generativeai as genai
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
@@ -59,4 +60,4 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(PollAnswerHandler(poll_answer))
-    app.run_polling()
+    app.run_polling(allowed_updates=["message", "poll_answer"])
