@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-TOKEN = os.environ["TELEGRAM_TOKEN"]
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
