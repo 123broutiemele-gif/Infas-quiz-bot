@@ -1,41 +1,41 @@
-import os, json
+import os, json, asyncio
 import google.generativeai as genai
-from telegram.ext import Updater, CommandHandler, PollAnswerHandler, CallbackContext
 from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
-        "👋 Bienvenue sur le Quiz INFAS !\n\nTape /quiz pour démarrer 5 questions."
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Bienvenue sur le Quiz INFAS !\n\nTape /quiz pour démarrer."
     )
 
-def quiz(update: Update, context: CallbackContext):
-    update.message.reply_text("⏳ Génération des questions, patiente...")
+async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Génération des questions...")
     model = genai.GenerativeModel("gemini-1.5-flash")
-    prompt = '''Génère 5 QCM sur les constantes vitales pour le concours INFAS.
-Réponds UNIQUEMENT en JSON valide sans markdown :
+    prompt = '''Génère 5 QCM sur les constantes vitales INFAS.
+Réponds UNIQUEMENT en JSON sans markdown :
 [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'''
     response = model.generate_content(prompt)
     text = response.text.strip().replace("```json","").replace("```","")
     questions = json.loads(text)
-    context.user_data.update({"questions": questions, "score": 0, "current": 0, "polls": {}})
-    send_question(update, context)
+    context.user_data.update({"questions":questions,"score":0,"current":0,"polls":{}})
+    await send_question(update, context)
 
-def send_question(update, context):
+async def send_question(update, context):
     qs = context.user_data["questions"]
     i = context.user_data["current"]
     if i >= len(qs):
         s = context.user_data["score"]
         t = len(qs)
-        update.message.reply_text(
-            f"🏁 Quiz terminé !\nScore : {s}/{t} ({round(s/t*100)}%)\n"
-            f"{'🎉 Excellent !' if s>=4 else '💪 Continue à réviser !'}"
+        await update.message.reply_text(
+            f"🏁 Terminé ! Score : {s}/{t} ({round(s/t*100)}%)\n"
+            f"{'🎉 Excellent !' if s>=4 else '💪 Continue !'}"
         )
         return
     q = qs[i]
-    msg = update.message.reply_poll(
+    msg = await update.message.reply_poll(
         question=f"❓ Q{i+1}: {q['question']}",
         options=q["options"], type="quiz",
         correct_option_id=q["correct"],
@@ -43,7 +43,7 @@ def send_question(update, context):
     )
     context.user_data["polls"][msg.poll.id] = i
 
-def poll_answer(update: Update, context: CallbackContext):
+async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.poll_answer
     polls = context.user_data.get("polls", {})
     if a.poll_id not in polls:
@@ -52,13 +52,11 @@ def poll_answer(update: Update, context: CallbackContext):
     if a.option_ids[0] == context.user_data["questions"][i]["correct"]:
         context.user_data["score"] += 1
     context.user_data["current"] += 1
-    context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
+    await context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
 
-updater = Updater(TOKEN)
-dp = updater.dispatcher
-dp.add_handler(CommandHandler("start", start))
-dp.add_handler(CommandHandler("quiz", quiz))
-dp.add_handler(PollAnswerHandler(poll_answer))
-updater.start_polling()
-python-telegram-bot==21.3
-google-generativeai
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("quiz", quiz))
+    app.add_handler(PollAnswerHandler(poll_answer))
+    app.run_polling()
