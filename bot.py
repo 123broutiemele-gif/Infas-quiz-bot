@@ -14,7 +14,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Génération des questions...")
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-pro")
     prompt = '''Génère 5 QCM sur les constantes vitales INFAS.
 Réponds UNIQUEMENT en JSON sans markdown :
 [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'''
