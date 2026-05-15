@@ -60,4 +60,5 @@ dp.add_handler(CommandHandler("start", start))
 dp.add_handler(CommandHandler("quiz", quiz))
 dp.add_handler(PollAnswerHandler(poll_answer))
 updater.start_polling()
-updater.idle()
+python-telegram-bot==21.3
+google-generativeai
