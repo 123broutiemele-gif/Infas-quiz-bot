@@ -9,13 +9,18 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "8819957114:AAHf_RNOHxTkgyQOwjExhErWD9I
 genai.configure(api_key=GEMINI_KEY)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Bienvenue sur INFAS QUIZ !\n\nTape /quiz pour démarrer.")
+    await update.message.reply_text(
+        "👋 Bienvenue sur INFAS QUIZ ! 🏥\n\n"
+        "📚 Je suis ton assistant de preparation au concours INFAS.\n\n"
+        "🎯 Tape /quiz pour demarrer un quiz sur les constantes vitales !\n\n"
+        "💪 Bonne chance ! 🍀"
+    )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Génération des questions...")
+    await update.message.reply_text("⏳ Generation des questions en cours... Patiente !")
     try:
         model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = 'Génère 3 QCM sur les constantes vitales INFAS. Réponds UNIQUEMENT en JSON : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'
+        prompt = 'Genere 5 QCM sur les constantes vitales INFAS. Reponds UNIQUEMENT en JSON : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'
         response = model.generate_content(prompt)
         text = response.text.strip().replace("```json","").replace("```","").strip()
         questions = json.loads(text)
@@ -23,6 +28,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["score"] = 0
         context.user_data["current"] = 0
         context.user_data["polls"] = {}
+        await update.message.reply_text("✅ Questions pretes ! C est parti ! 🚀")
         await send_question(update, context)
     except Exception as e:
         await update.message.reply_text(f"❌ Erreur : {str(e)}")
@@ -30,21 +36,48 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_question(update, context):
     qs = context.user_data["questions"]
     i = context.user_data["current"]
-    if i >= len(qs):
+    total = len(qs)
+    if i >= total:
         s = context.user_data["score"]
-        t = len(qs)
+        pct = round(s / total * 100)
+        if pct >= 80:
+            mention = "🎉 Excellent ! Tu maitrises bien ce chapitre !"
+        elif pct >= 60:
+            mention = "💪 Bien ! Continue a reviser !"
+        else:
+            mention = "📚 Revois ta fiche de cours et reessaie !"
         await update.message.reply_text(
-            f"🏁 Terminé ! Score : {s}/{t} ({round(s/t*100)}%)\n"
-            f"{'🎉 Excellent !' if s==t else '💪 Continue à réviser !'}"
+            f"🏁 Quiz termine !\n\n"
+            f"📊 Score : {s}/{total} ({pct}%)\n\n"
+            f"{mention}\n\n"
+            f"🔄 Tape /quiz pour un nouveau quiz !"
         )
         return
     q = qs[i]
     msg = await update.message.reply_poll(
-        question=f"Q{i+1}: {q['question']}",
+        question=f"❓ Q{i+1}/{total} : {q['question']}",
         options=q["options"],
         type="quiz",
         correct_option_id=q["correct"],
         explanation=q["explication"],
         is_anonymous=False
     )
-    context.user_data["polls"][msg
+    context.user_data["polls"][msg.poll.id] = i
+
+async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    a = update.poll_answer
+    polls = context.user_data.get("polls", {})
+    if a.poll_id not in polls:
+        return
+    i = polls[a.poll_id]
+    if a.option_ids[0] == context.user_data["questions"][i]["correct"]:
+        context.user_data["score"] += 1
+    context.user_data["current"] += 1
+    await context.bot.send_message(chat_id=a.user.id, text="✅ Bonne reponse ! ➡️ Question suivante...")
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("quiz", quiz))
+    app.add_handler(PollAnswerHandler(poll_answer))
+    app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
