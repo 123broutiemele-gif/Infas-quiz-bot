@@ -3,8 +3,8 @@ import google.generativeai as genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-TOKEN = os.environ["TELEGRAM_TOKEN"]
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY", "AIzaSyC3fPfSFNE3InvX9u9I3-V5cKXcIIaP_IU"))
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "7964693307:AAGuRHTHa2vXDO3SYPPvCKOVvIAJdxeXGK4")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
