@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyC3fPfSFNE3InvX9u9I3-V5cKXcIIaP_IU")
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "7964693307:AAGuRHTHa2vXDO3SYPPvCKOVvIAJdxeXGK4")
+TOKEN = os.environ.get("TELEGRAM_TOKEN", "8819957114:AAF3UkdxHMizmV6MHTsBjkiByzs6TYqKZdE")
 
 genai.configure(api_key=GEMINI_KEY)
 
