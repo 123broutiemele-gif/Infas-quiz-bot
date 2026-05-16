@@ -45,7 +45,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = response.choices[0].message.content.strip()
 
-        # Nettoyage renforcé
+        # Nettoyage renforcé du JSON
         json_match = re.search(r'\[.*\]', text, re.DOTALL)
         if json_match:
             text = json_match.group(0)
@@ -93,23 +93,22 @@ if __name__ == "__main__":
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
-    app.add_handler(PollAnswerHandler(lambda u, c: None))  # Placeholder pour l'instant
+    app.add_handler(PollAnswerHandler(lambda update, context: None))  # Temporaire
 
-    print("🤖 Bot INFAS QUIZ démarré avec succès (Polling Mode)")
+    print("🤖 Bot INFAS QUIZ démarré avec succès (Polling)")
 
-    # Boucle robuste
+    # Mode Polling robuste
     import asyncio
     while True:
         try:
-            await app.initialize()
-            await app.start()
-            await app.bot.delete_webhook(drop_pending_updates=True)  # Nettoyage webhook
-            print("✅ Polling démarré")
-            app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
+            app.run_polling(
+                allowed_updates=["message", "poll_answer"],
+                drop_pending_updates=True
+            )
         except Conflict:
-            print("⚠️ Conflit → Redémarrage...")
+            print("⚠️ Conflit détecté (ancienne instance), redémarrage...")
         except TimedOut:
-            print("⚠️ Timeout → Nouvelle tentative...")
+            print("⚠️ Timeout, nouvelle tentative...")
         except Exception as e:
             print(f"❌ Erreur : {e}")
         asyncio.sleep(5)
