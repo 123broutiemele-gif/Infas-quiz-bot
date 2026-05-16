@@ -1,15 +1,17 @@
 import os
 import json
+import asyncio
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
+from telegram.error import TimedOut
 
 # ==================== CONFIGURATION ====================
 TOKEN = os.environ.get("TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 if not TOKEN:
-    raise ValueError("❌ Le TOKEN Telegram n'est pas configuré dans les variables d'environnement !")
+    raise ValueError("❌ Le TOKEN Telegram n'est pas configuré !")
 
 if not GROQ_API_KEY:
     raise ValueError("❌ La clé GROQ_API_KEY n'est pas configurée !")
@@ -28,7 +30,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",   # Modèle actuel et fonctionnel
+            model="llama-3.1-8b-instant",
             messages=[{
                 "role": "user", 
                 "content": (
@@ -44,7 +46,6 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         text = response.choices[0].message.content.strip()
-        # Nettoyage du JSON
         text = text.replace("```json", "").replace("```", "").strip()
 
         questions = json.loads(text)
@@ -60,9 +61,9 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_question(update, context)
 
     except json.JSONDecodeError:
-        await update.message.reply_text("❌ Erreur : L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
+        await update.message.reply_text("❌ Erreur : L'IA n'a pas renvoyé un JSON valide. Réessayez.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Erreur lors de la génération : {str(e)}")
+        await update.message.reply_text(f"❌ Erreur génération : {str(e)}")
 
 async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     qs = context.user_data.get("questions", [])
@@ -72,7 +73,6 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if i >= total:
         s = context.user_data.get("score", 0)
         pct = round(s / total * 100) if total > 0 else 0
-        
         if pct >= 80:
             mention = "Excellent ! Tu maîtrises bien ce chapitre ! 🎉"
         elif pct >= 60:
@@ -81,10 +81,7 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mention = "Revois ta fiche de cours et réessaie ! 📚"
         
         await update.message.reply_text(
-            f"🏁 **Quiz terminé !**\n\n"
-            f"Score : **{s}/{total}** ({pct}%)\n\n"
-            f"{mention}\n\n"
-            "Tape /quiz pour un nouveau quiz."
+            f"🏁 **Quiz terminé !**\n\nScore : **{s}/{total}** ({pct}%)\n\n{mention}\n\nTape /quiz pour un nouveau quiz."
         )
         return
 
@@ -102,24 +99,18 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.poll_answer
     polls = context.user_data.get("polls", {})
-    
     if a.poll_id not in polls:
         return
 
     i = polls[a.poll_id]
     questions = context.user_data.get("questions", [])
 
-    # Vérifier si la réponse est correcte
     if a.option_ids and a.option_ids[0] == questions[i]["correct"]:
         context.user_data["score"] = context.user_data.get("score", 0) + 1
 
     context.user_data["current"] += 1
 
-    # Envoyer la question suivante
-    await context.bot.send_message(
-        chat_id=a.user.id, 
-        text="➡️ Question suivante..."
-    )
+    await context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
     await send_question(update, context)
 
 if __name__ == "__main__":
@@ -128,6 +119,20 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(PollAnswerHandler(poll_answer))
-    
+
     print("🤖 Bot INFAS QUIZ démarré avec succès !")
-    app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
+
+    # Gestion améliorée du polling
+    while True:
+        try:
+            app.run_polling(
+                allowed_updates=["message", "poll_answer"],
+                drop_pending_updates=True,
+                close_loop=False
+            )
+        except TimedOut:
+            print("⚠️ Timeout détecté, redémarrage du polling...")
+            asyncio.sleep(5)
+        except Exception as e:
+            print(f"❌ Erreur inattendue : {e}")
+            asyncio.sleep(10)
