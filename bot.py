@@ -1,37 +1,32 @@
 import os, json
-import google.generativeai as genai
+from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyAaJoOxn9GNHQIP7Cii0qCyhQeZSRh5VRk")
+client = Groq(api_key=os.environ.get("GROQ_API_KEY", "TA_CLE_GROQ_ICI"))
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "8819957114:AAHf_RNOHxTkgyQOwjExhErWD9Iool7oqsU")
-
-genai.configure(api_key=GEMINI_KEY)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Bienvenue sur INFAS QUIZ ! 🏥\n\n"
-        "📚 Je suis ton assistant de preparation au concours INFAS.\n\n"
-        "🎯 Tape /quiz pour demarrer un quiz sur les constantes vitales !\n\n"
-        "💪 Bonne chance ! 🍀"
+        "Bienvenue sur INFAS QUIZ ! Tape /quiz pour demarrer."
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Generation des questions en cours... Patiente !")
+    await update.message.reply_text("Generation des questions...")
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        prompt = 'Genere 5 QCM sur les constantes vitales INFAS. Reponds UNIQUEMENT en JSON : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'
-        response = model.generate_content(prompt)
-        text = response.text.strip().replace("```json","").replace("```","").strip()
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[{"role": "user", "content": 'Genere 5 QCM sur les constantes vitales INFAS. Reponds UNIQUEMENT en JSON sans markdown : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'}]
+        )
+        text = response.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
         questions = json.loads(text)
         context.user_data["questions"] = questions
         context.user_data["score"] = 0
         context.user_data["current"] = 0
         context.user_data["polls"] = {}
-        await update.message.reply_text("✅ Questions pretes ! C est parti ! 🚀")
         await send_question(update, context)
     except Exception as e:
-        await update.message.reply_text(f"❌ Erreur : {str(e)}")
+        await update.message.reply_text(f"Erreur : {str(e)}")
 
 async def send_question(update, context):
     qs = context.user_data["questions"]
@@ -41,21 +36,16 @@ async def send_question(update, context):
         s = context.user_data["score"]
         pct = round(s / total * 100)
         if pct >= 80:
-            mention = "🎉 Excellent ! Tu maitrises bien ce chapitre !"
+            mention = "Excellent ! Tu maitrises bien ce chapitre !"
         elif pct >= 60:
-            mention = "💪 Bien ! Continue a reviser !"
+            mention = "Bien ! Continue a reviser !"
         else:
-            mention = "📚 Revois ta fiche de cours et reessaie !"
-        await update.message.reply_text(
-            f"🏁 Quiz termine !\n\n"
-            f"📊 Score : {s}/{total} ({pct}%)\n\n"
-            f"{mention}\n\n"
-            f"🔄 Tape /quiz pour un nouveau quiz !"
-        )
+            mention = "Revois ta fiche de cours et reessaie !"
+        await update.message.reply_text(f"Quiz termine ! Score : {s}/{total} ({pct}%)\n{mention}\nTape /quiz pour un nouveau quiz !")
         return
     q = qs[i]
     msg = await update.message.reply_poll(
-        question=f"❓ Q{i+1}/{total} : {q['question']}",
+        question=f"Q{i+1}/{total} : {q['question']}",
         options=q["options"],
         type="quiz",
         correct_option_id=q["correct"],
@@ -73,7 +63,7 @@ async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if a.option_ids[0] == context.user_data["questions"][i]["correct"]:
         context.user_data["score"] += 1
     context.user_data["current"] += 1
-    await context.bot.send_message(chat_id=a.user.id, text="✅ Bonne reponse ! ➡️ Question suivante...")
+    await context.bot.send_message(chat_id=a.user.id, text="Question suivante...")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
