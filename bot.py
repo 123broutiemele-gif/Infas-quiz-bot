@@ -1,55 +1,100 @@
-import os, json
+import os
+import json
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY", "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"))
-client = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
+# ==================== CONFIGURATION ====================
+TOKEN = os.environ.get("TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+
+if not TOKEN:
+    raise ValueError("❌ Le TOKEN Telegram n'est pas configuré dans les variables d'environnement !")
+
+if not GROQ_API_KEY:
+    raise ValueError("❌ La clé GROQ_API_KEY n'est pas configurée !")
+
+client = Groq(api_key=GROQ_API_KEY)
+# ======================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Bienvenue sur INFAS QUIZ ! Tape /quiz pour demarrer."
+        "Bienvenue sur **INFAS QUIZ** ! 🎯\n\n"
+        "Tape /quiz pour démarrer un nouveau quiz sur les constantes vitales."
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Generation des questions...")
+    await update.message.reply_text("⏳ Génération des questions en cours...")
+
     try:
         response = client.chat.completions.create(
             model="llama3-8b-8192",
-            messages=[{"role": "user", "content": 'Genere 5 QCM sur les constantes vitales INFAS. Reponds UNIQUEMENT en JSON sans markdown : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'}]
+            messages=[{
+                "role": "user", 
+                "content": (
+                    'Génère 5 QCM sur les constantes vitales INFAS. '
+                    'Réponds UNIQUEMENT en JSON valide sans aucun markdown, '
+                    'sans explication supplémentaire : '
+                    '[{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],'
+                    '"correct":0,"explication":"..."}]'
+                )
+            }],
+            temperature=0.7,
+            max_tokens=1500
         )
-        text = response.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
+
+        text = response.choices[0].message.content.strip()
+        # Nettoyage robuste du JSON
+        text = text.replace("```json", "").replace("```", "").strip()
+
         questions = json.loads(text)
+
+        if not questions or len(questions) == 0:
+            raise ValueError("Aucune question générée")
+
         context.user_data["questions"] = questions
         context.user_data["score"] = 0
         context.user_data["current"] = 0
         context.user_data["polls"] = {}
-        await send_question(update, context)
-    except Exception as e:
-        await update.message.reply_text(f"Erreur : {str(e)}")
 
-async def send_question(update, context):
-    qs = context.user_data["questions"]
-    i = context.user_data["current"]
+        await send_question(update, context)
+
+    except json.JSONDecodeError:
+        await update.message.reply_text("❌ Erreur : L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erreur lors de la génération : {str(e)}")
+
+async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    qs = context.user_data.get("questions", [])
+    i = context.user_data.get("current", 0)
     total = len(qs)
+
     if i >= total:
-        s = context.user_data["score"]
-        pct = round(s / total * 100)
+        s = context.user_data.get("score", 0)
+        pct = round(s / total * 100) if total > 0 else 0
+        
         if pct >= 80:
-            mention = "Excellent ! Tu maitrises bien ce chapitre !"
+            mention = "Excellent ! Tu maîtrises bien ce chapitre ! 🎉"
         elif pct >= 60:
-            mention = "Bien ! Continue a reviser !"
+            mention = "Bien ! Continue à réviser ! 👍"
         else:
-            mention = "Revois ta fiche de cours et reessaie !"
-        await update.message.reply_text(f"Quiz termine ! Score : {s}/{total} ({pct}%)\n{mention}\nTape /quiz pour un nouveau quiz !")
+            mention = "Revois ta fiche de cours et réessaie ! 📚"
+        
+        await update.message.reply_text(
+            f"🏁 **Quiz terminé !**\n\n"
+            f"Score : **{s}/{total}** ({pct}%)\n\n"
+            f"{mention}\n\n"
+            "Tape /quiz pour un nouveau quiz."
+        )
         return
+
     q = qs[i]
     msg = await update.message.reply_poll(
         question=f"Q{i+1}/{total} : {q['question']}",
         options=q["options"],
         type="quiz",
         correct_option_id=q["correct"],
-        explanation=q["explication"],
+        explanation=q.get("explication", ""),
         is_anonymous=False
     )
     context.user_data["polls"][msg.poll.id] = i
@@ -57,17 +102,32 @@ async def send_question(update, context):
 async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.poll_answer
     polls = context.user_data.get("polls", {})
+    
     if a.poll_id not in polls:
         return
+
     i = polls[a.poll_id]
-    if a.option_ids[0] == context.user_data["questions"][i]["correct"]:
-        context.user_data["score"] += 1
+    questions = context.user_data.get("questions", [])
+
+    # Vérifier si la réponse est correcte
+    if a.option_ids and a.option_ids[0] == questions[i]["correct"]:
+        context.user_data["score"] = context.user_data.get("score", 0) + 1
+
     context.user_data["current"] += 1
-    await context.bot.send_message(chat_id=a.user.id, text="Question suivante...")
+
+    # Envoyer la question suivante
+    await context.bot.send_message(
+        chat_id=a.user.id, 
+        text="➡️ Question suivante..."
+    )
+    await send_question(update, context)   # ← Correction importante
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(PollAnswerHandler(poll_answer))
+    
+    print("🤖 Bot INFAS QUIZ démarré...")
     app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
