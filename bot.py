@@ -1,10 +1,8 @@
 import os
 import json
-import asyncio
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
-from telegram.error import TimedOut
 
 # ==================== CONFIGURATION ====================
 TOKEN = os.environ.get("TOKEN")
@@ -60,8 +58,6 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await send_question(update, context)
 
-    except json.JSONDecodeError:
-        await update.message.reply_text("❌ Erreur : L'IA n'a pas renvoyé un JSON valide. Réessayez.")
     except Exception as e:
         await update.message.reply_text(f"❌ Erreur génération : {str(e)}")
 
@@ -109,7 +105,6 @@ async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["score"] = context.user_data.get("score", 0) + 1
 
     context.user_data["current"] += 1
-
     await context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
     await send_question(update, context)
 
@@ -122,17 +117,15 @@ if __name__ == "__main__":
 
     print("🤖 Bot INFAS QUIZ démarré avec succès !")
 
-    # Gestion améliorée du polling
-    while True:
-        try:
-            app.run_polling(
-                allowed_updates=["message", "poll_answer"],
-                drop_pending_updates=True,
-                close_loop=False
-            )
-        except TimedOut:
-            print("⚠️ Timeout détecté, redémarrage du polling...")
-            asyncio.sleep(5)
-        except Exception as e:
-            print(f"❌ Erreur inattendue : {e}")
-            asyncio.sleep(10)
+    # Mode Webhook (recommandé sur Railway)
+    import asyncio
+    PORT = int(os.environ.get("PORT", 8080))
+    
+    async def main():
+        await app.initialize()
+        await app.start()
+        await app.bot.set_webhook(f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'ton-domaine.up.railway.app')}/")
+        print(f"🌐 Webhook activé sur le port {PORT}")
+        await asyncio.sleep(3600 * 24 * 30)  # Garder le process vivant
+
+    asyncio.run(main())
