@@ -28,7 +28,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         response = client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",   # Modèle actuel et fonctionnel
             messages=[{
                 "role": "user", 
                 "content": (
@@ -44,7 +44,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         text = response.choices[0].message.content.strip()
-        # Nettoyage robuste du JSON
+        # Nettoyage du JSON
         text = text.replace("```json", "").replace("```", "").strip()
 
         questions = json.loads(text)
@@ -120,7 +120,7 @@ async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=a.user.id, 
         text="➡️ Question suivante..."
     )
-    await send_question(update, context)   # ← Correction importante
+    await send_question(update, context)
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
@@ -129,5 +129,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(PollAnswerHandler(poll_answer))
     
-    print("🤖 Bot INFAS QUIZ démarré...")
+    print("🤖 Bot INFAS QUIZ démarré avec succès !")
     app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
