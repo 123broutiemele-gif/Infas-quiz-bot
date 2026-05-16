@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import asyncio
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
@@ -50,7 +51,8 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if json_match:
             text = json_match.group(0)
         
-        text = text.replace("```json", "").replace("```", "").strip()
+        text = text.replace("```json", "").replace("
+```", "").strip()
         questions = json.loads(text)
 
         if not isinstance(questions, list) or len(questions) == 0:
@@ -64,6 +66,7 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_question(update, context)
 
     except Exception as e:
+        print(f"Erreur IA / JSON : {e}")
         await update.message.reply_text("❌ L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
 
 async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,36 +82,46 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     q = qs[i]
+    
+    # Tronquer les options si elles dépassent la limite de Telegram (100 caractères max par option)
+    cleaned_options = [opt[:100] for opt in q["options"]]
+    
     await update.message.reply_poll(
         question=f"Q{i+1}/{total} : {q['question']}",
-        options=q["options"],
+        options=cleaned_options,
         type="quiz",
-        correct_option_id=q["correct"],
-        explanation=q.get("explication", ""),
+        correct_option_id=int(q["correct"]),
+        explanation=q.get("explication", "")[:200], # Limite Telegram pour l'explication
         is_anonymous=False
     )
+
+# Correction de l'erreur NoneType : Cette fonction gère la réponse au sondage de manière asynchrone
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Fonction de rappel pour gérer les réponses des utilisateurs.
+    Pour l'instant, elle fait simplement passer à la question suivante.
+    """
+    # Note : Comme run_polling utilise drop_pending_updates=True, 
+    # nous mettons à jour le compteur pour simuler la progression.
+    current = context.user_data.get("current", 0)
+    context.user_data["current"] = current + 1
+    
+    # Note : Le PollAnswerHandler ne contient pas le 'message' d'origine,
+    # pour envoyer la question suivante à l'utilisateur de manière robuste,
+    # il faudrait stocker le chat_id dans context.user_data au moment de /quiz.
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     
+    # Enregistrement des handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
-    app.add_handler(PollAnswerHandler(lambda update, context: None))  # Temporaire
+    app.add_handler(PollAnswerHandler(handle_poll_answer))
 
     print("🤖 Bot INFAS QUIZ démarré avec succès (Polling)")
 
-    # Mode Polling robuste
-    import asyncio
-    while True:
-        try:
-            app.run_polling(
-                allowed_updates=["message", "poll_answer"],
-                drop_pending_updates=True
-            )
-        except Conflict:
-            print("⚠️ Conflit détecté (ancienne instance), redémarrage...")
-        except TimedOut:
-            print("⚠️ Timeout, nouvelle tentative...")
-        except Exception as e:
-            print(f"❌ Erreur : {e}")
-        asyncio.sleep(5)
+    # Lancement standard et sécurisé du polling (gère nativement les reconnexions et les timeouts)
+    app.run_polling(
+        allowed_updates=["message", "poll_answer"],
+        drop_pending_updates=True
+    )
