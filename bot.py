@@ -94,6 +94,9 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.poll_answer
+    if not a or a.poll_id is None:
+        return
+
     polls = context.user_data.get("polls", {})
     if a.poll_id not in polls:
         return
@@ -101,12 +104,21 @@ async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     i = polls[a.poll_id]
     questions = context.user_data.get("questions", [])
 
+    # Incrémenter le score si bonne réponse
     if a.option_ids and a.option_ids[0] == questions[i]["correct"]:
         context.user_data["score"] = context.user_data.get("score", 0) + 1
 
     context.user_data["current"] += 1
-    await context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
-    await send_question(update, context)
+
+    # Envoyer la prochaine question (utiliser chat_id de l'utilisateur)
+    try:
+        await context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
+        # On recrée un Update fictif pour send_question (solution simple)
+        fake_update = Update(0, None)
+        fake_update.message = await context.bot.send_message(chat_id=a.user.id, text="...")
+        await send_question(fake_update, context)
+    except Exception:
+        pass  # On évite les crashes
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
@@ -117,15 +129,22 @@ if __name__ == "__main__":
 
     print("🤖 Bot INFAS QUIZ démarré avec succès !")
 
-    # Mode Webhook (recommandé sur Railway)
+    # === MODE WEBHOOK (recommandé sur Railway) ===
     import asyncio
     PORT = int(os.environ.get("PORT", 8080))
-    
+
     async def main():
         await app.initialize()
         await app.start()
-        await app.bot.set_webhook(f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'ton-domaine.up.railway.app')}/")
+        
+        # Supprime l'ancien webhook et en met un nouveau
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        await app.bot.set_webhook(
+            url=f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN')}/",
+            allowed_updates=["message", "poll_answer"]
+        )
+        
         print(f"🌐 Webhook activé sur le port {PORT}")
-        await asyncio.sleep(3600 * 24 * 30)  # Garder le process vivant
+        await asyncio.Event().wait()  # Garde le bot vivant
 
     asyncio.run(main())
