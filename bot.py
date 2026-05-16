@@ -4,6 +4,7 @@ import re
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
+from telegram.error import Conflict, TimedOut
 
 # ==================== CONFIGURATION ====================
 TOKEN = os.environ.get("TOKEN")
@@ -34,9 +35,8 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "content": (
                     'Génère exactement 5 QCM sur les constantes vitales INFAS. '
                     'Réponds UNIQUEMENT avec un tableau JSON valide, rien d\'autre. '
-                    'Pas de markdown, pas de ```json, pas d\'explication. '
-                    'Format exact : '
-                    '[{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'
+                    'Pas de markdown, pas d\'explication. '
+                    'Format : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'
                 )
             }],
             temperature=0.5,
@@ -45,19 +45,16 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = response.choices[0].message.content.strip()
 
-        # Nettoyage renforcé du JSON
-        # 1. Extraire seulement la partie entre [ et ]
-        json_match = re.search(r'\[.*?\]', text, re.DOTALL)
+        # Nettoyage renforcé
+        json_match = re.search(r'\[.*\]', text, re.DOTALL)
         if json_match:
             text = json_match.group(0)
         
-        # 2. Nettoyage supplémentaire
         text = text.replace("```json", "").replace("```", "").strip()
-
         questions = json.loads(text)
 
         if not isinstance(questions, list) or len(questions) == 0:
-            raise ValueError("Le JSON généré n'est pas une liste valide")
+            raise ValueError("JSON invalide")
 
         context.user_data["questions"] = questions
         context.user_data["score"] = 0
@@ -66,10 +63,8 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await send_question(update, context)
 
-    except json.JSONDecodeError:
-        await update.message.reply_text("❌ L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Erreur génération : {str(e)}")
+        await update.message.reply_text("❌ L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
 
 async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     qs = context.user_data.get("questions", [])
@@ -79,22 +74,12 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if i >= total:
         s = context.user_data.get("score", 0)
         pct = round(s / total * 100) if total > 0 else 0
-        if pct >= 80:
-            mention = "Excellent ! Tu maîtrises bien ce chapitre ! 🎉"
-        elif pct >= 60:
-            mention = "Bien ! Continue à réviser ! 👍"
-        else:
-            mention = "Revois ta fiche de cours et réessaie ! 📚"
-        
-        await update.message.reply_text(
-            f"🏁 **Quiz terminé !**\n\n"
-            f"Score : **{s}/{total}** ({pct}%)\n\n"
-            f"{mention}\n\nTape /quiz pour un nouveau quiz."
-        )
+        mention = "Excellent ! Tu maîtrises bien ce chapitre ! 🎉" if pct >= 80 else "Bien ! Continue à réviser ! 👍" if pct >= 60 else "Revois ta fiche de cours 📚"
+        await update.message.reply_text(f"🏁 Quiz terminé !\nScore : {s}/{total} ({pct}%)\n{mention}\n\nTape /quiz pour un nouveau quiz.")
         return
 
     q = qs[i]
-    msg = await update.message.reply_poll(
+    await update.message.reply_poll(
         question=f"Q{i+1}/{total} : {q['question']}",
         options=q["options"],
         type="quiz",
@@ -102,32 +87,29 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         explanation=q.get("explication", ""),
         is_anonymous=False
     )
-    context.user_data["polls"][msg.poll.id] = i
-
-async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    a = update.poll_answer
-    if not a or not a.poll_id:
-        return
-
-    polls = context.user_data.get("polls", {})
-    if a.poll_id not in polls:
-        return
-
-    i = polls[a.poll_id]
-    questions = context.user_data.get("questions", [])
-
-    if a.option_ids and a.option_ids[0] == questions[i]["correct"]:
-        context.user_data["score"] = context.user_data.get("score", 0) + 1
-
-    context.user_data["current"] += 1
-    await context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
-    app.add_handler(PollAnswerHandler(poll_answer))
+    app.add_handler(PollAnswerHandler(lambda u, c: None))  # Placeholder pour l'instant
 
-    print("🤖 Bot INFAS QUIZ démarré avec succès !")
-    app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
+    print("🤖 Bot INFAS QUIZ démarré avec succès (Polling Mode)")
+
+    # Boucle robuste
+    import asyncio
+    while True:
+        try:
+            await app.initialize()
+            await app.start()
+            await app.bot.delete_webhook(drop_pending_updates=True)  # Nettoyage webhook
+            print("✅ Polling démarré")
+            app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
+        except Conflict:
+            print("⚠️ Conflit → Redémarrage...")
+        except TimedOut:
+            print("⚠️ Timeout → Nouvelle tentative...")
+        except Exception as e:
+            print(f"❌ Erreur : {e}")
+        asyncio.sleep(5)
