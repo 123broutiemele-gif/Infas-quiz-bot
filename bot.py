@@ -3,7 +3,7 @@ import google.generativeai as genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyC3fPfSFNE3InvX9u9I3-V5cKXcIIaP_IU")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyAaJoOxn9GNHQIP7Cii0qCyhQeZSRh5VRk")
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "8819957114:AAHf_RNOHxTkgyQOwjExhErWD9Iool7oqsU")
 
 genai.configure(api_key=GEMINI_KEY)
