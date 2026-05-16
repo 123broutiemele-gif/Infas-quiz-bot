@@ -1,32 +1,27 @@
-import os, json
+import os, json, asyncio
 import google.generativeai as genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyC3fPfSFNE3InvX9u9I3-V5cKXcIIaP_IU")
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "8819957114:AAF3UkdxHMizmV6MHTsBjkiByzs6TYqKZdE")
-
-genai.configure(api_key=GEMINI_KEY)
+genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+TOKEN = os.environ["8819957114:AAGHXvL9rKOWAxav1tTajc8_sxEdq53Lv9E"]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Bienvenue ! Tape /quiz pour démarrer.")
+    await update.message.reply_text(
+        "👋 Bienvenue sur le Quiz INFAS !\n\nTape /quiz pour démarrer."
+    )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Génération des questions...")
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = 'Génère 3 QCM sur les constantes vitales INFAS. Réponds UNIQUEMENT en JSON : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-        text = text.replace("```json","").replace("```","").strip()
-        questions = json.loads(text)
-        context.user_data["questions"] = questions
-        context.user_data["score"] = 0
-        context.user_data["current"] = 0
-        context.user_data["polls"] = {}
-        await send_question(update, context)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Erreur : {str(e)}")
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    prompt = '''Génère 5 QCM sur les constantes vitales INFAS.
+Réponds UNIQUEMENT en JSON sans markdown :
+[{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'''
+    response = model.generate_content(prompt)
+    text = response.text.strip().replace("```json","").replace("```","")
+    questions = json.loads(text)
+    context.user_data.update({"questions":questions,"score":0,"current":0,"polls":{}})
+    await send_question(update, context)
 
 async def send_question(update, context):
     qs = context.user_data["questions"]
@@ -34,16 +29,17 @@ async def send_question(update, context):
     if i >= len(qs):
         s = context.user_data["score"]
         t = len(qs)
-        await update.message.reply_text(f"🏁 Terminé ! Score : {s}/{t}")
+        await update.message.reply_text(
+            f"🏁 Terminé ! Score : {s}/{t} ({round(s/t*100)}%)\n"
+            f"{'🎉 Excellent !' if s>=4 else '💪 Continue !'}"
+        )
         return
     q = qs[i]
     msg = await update.message.reply_poll(
-        question=f"Q{i+1}: {q['question']}",
-        options=q["options"],
-        type="quiz",
+        question=f"❓ Q{i+1}: {q['question']}",
+        options=q["options"], type="quiz",
         correct_option_id=q["correct"],
-        explanation=q["explication"],
-        is_anonymous=False
+        explanation=q["explication"], is_anonymous=False
     )
     context.user_data["polls"][msg.poll.id] = i
 
@@ -63,4 +59,4 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(PollAnswerHandler(poll_answer))
-    app.run_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
+    app.run_polling()
