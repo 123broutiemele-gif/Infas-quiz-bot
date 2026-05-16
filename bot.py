@@ -3,8 +3,8 @@ from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY", "TA_CLE_GROQ_ICI"))
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "8819957114:AAHf_RNOHxTkgyQOwjExhErWD9Iool7oqsU")
+client = Groq(api_key=os.environ.get("GROQ_API_KEY", "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"))
+client = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
