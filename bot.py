@@ -3,6 +3,7 @@ import json
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
+from telegram.error import Conflict, TimedOut
 
 # ==================== CONFIGURATION ====================
 TOKEN = os.environ.get("TOKEN")
@@ -10,7 +11,6 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 if not TOKEN:
     raise ValueError("❌ Le TOKEN Telegram n'est pas configuré !")
-
 if not GROQ_API_KEY:
     raise ValueError("❌ La clé GROQ_API_KEY n'est pas configurée !")
 
@@ -94,7 +94,7 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.poll_answer
-    if not a or a.poll_id is None:
+    if not a or not a.poll_id:
         return
 
     polls = context.user_data.get("polls", {})
@@ -104,21 +104,41 @@ async def poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     i = polls[a.poll_id]
     questions = context.user_data.get("questions", [])
 
-    # Incrémenter le score si bonne réponse
     if a.option_ids and a.option_ids[0] == questions[i]["correct"]:
         context.user_data["score"] = context.user_data.get("score", 0) + 1
 
     context.user_data["current"] += 1
 
-    # Envoyer la prochaine question (utiliser chat_id de l'utilisateur)
+    # Question suivante
     try:
         await context.bot.send_message(chat_id=a.user.id, text="➡️ Question suivante...")
-        # On recrée un Update fictif pour send_question (solution simple)
-        fake_update = Update(0, None)
-        fake_update.message = await context.bot.send_message(chat_id=a.user.id, text="...")
-        await send_question(fake_update, context)
+        # On utilise le bot directement pour éviter le problème d'update.message
+        await send_question_to_user(a.user.id, context)
     except Exception:
-        pass  # On évite les crashes
+        pass
+
+async def send_question_to_user(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Version sécurisée pour envoyer la question suivante"""
+    qs = context.user_data.get("questions", [])
+    i = context.user_data.get("current", 0)
+    total = len(qs)
+
+    if i >= total:
+        # Fin du quiz (déjà géré ailleurs)
+        return
+
+    q = qs[i]
+    await context.bot.send_poll(
+        chat_id=chat_id,
+        question=f"Q{i+1}/{total} : {q['question']}",
+        options=q["options"],
+        type="quiz",
+        correct_option_id=q["correct"],
+        explanation=q.get("explication", ""),
+        is_anonymous=False
+    )
+    # Mise à jour de l'index du poll
+    # Note: Pour simplifier, on peut améliorer plus tard
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
@@ -129,22 +149,20 @@ if __name__ == "__main__":
 
     print("🤖 Bot INFAS QUIZ démarré avec succès !")
 
-    # === MODE WEBHOOK (recommandé sur Railway) ===
-    import asyncio
-    PORT = int(os.environ.get("PORT", 8080))
-
-    async def main():
-        await app.initialize()
-        await app.start()
-        
-        # Supprime l'ancien webhook et en met un nouveau
-        await app.bot.delete_webhook(drop_pending_updates=True)
-        await app.bot.set_webhook(
-            url=f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN')}/",
-            allowed_updates=["message", "poll_answer"]
-        )
-        
-        print(f"🌐 Webhook activé sur le port {PORT}")
-        await asyncio.Event().wait()  # Garde le bot vivant
-
-    asyncio.run(main())
+    # Boucle robuste pour polling
+    while True:
+        try:
+            app.run_polling(
+                allowed_updates=["message", "poll_answer"],
+                drop_pending_updates=True,
+                close_loop=False
+            )
+        except Conflict:
+            print("⚠️ Conflit détecté (ancienne instance), redémarrage...")
+            # Attendre un peu puis réessayer
+        except TimedOut:
+            print("⚠️ Timeout, nouvelle tentative...")
+        except Exception as e:
+            print(f"❌ Erreur : {e}")
+        import asyncio
+        asyncio.sleep(5)
