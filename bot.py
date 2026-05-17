@@ -1,146 +1,172 @@
 import os
 import json
-import re
+import logging
 import asyncio
-from groq import Groq
+import aiohttp
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# ==================== CONFIGURATION ====================
-TOKEN = os.environ.get("TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+# Configuration des logs pour Railway afin de suivre l'activité du bot en temps réel
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-if not TOKEN:
-    raise ValueError("❌ Le TOKEN Telegram n'est pas configuré !")
+# 1. RECUPERATION DES VARIABLES DE VOTRE RAILWAY
+# Lecture du Token Telegram (Votre variable s'appelle "TOKEN")
+TELEGRAM_TOKEN = os.getenv("TOKEN") or os.getenv("TELEGRAM_TOKEN")
+
+# Recherche intelligente de la clé Groq
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
-    raise ValueError("❌ La clé GROQ_API_KEY n'est pas configurée !")
+    # Si le nom exact n'est pas trouvé, on cherche une variable qui commence par "GROQ"
+    for env_name, env_value in os.environ.items():
+        if env_name.startswith("GROQ_"):
+            GROQ_API_KEY = env_value
+            logger.info(f"Clé Groq détectée automatiquement via la variable : {env_name}")
+            break
 
-client = Groq(api_key=GROQ_API_KEY)
-# ======================================================
+# Modèle Groq recommandé (très performant pour le JSON et la médecine)
+GROK_MODEL = "llama-3.3-70b-versatile"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Bienvenue sur **INFAS QUIZ** ! 🎯\n\n"
-        "Tape /quiz pour démarrer un nouveau quiz sur les constantes vitales."
+async def generer_quiz_groq() -> dict:
+    """
+    Appelle l'API de Groq pour générer une question médicale structurée.
+    Utilise le mode JSON de Groq pour garantir un format 100% valide.
+    """
+    if not GROQ_API_KEY:
+        raise ValueError("La clé API Groq est introuvable dans vos variables de service Railway.")
+
+    system_prompt = (
+        "Tu es un enseignant et tuteur expert préparant les étudiants ivoiriens au concours de l'INFAS "
+        "(Institut National de Formation des Agents de Santé). Tu génères des questions de révision rigoureuses, "
+        "médicalement exactes et adaptées au concours.\n\n"
+        "ATTENTION SCIENTIFIQUE :\n"
+        "- Ne confonds jamais le débit cardiaque (exprimé en L/min, environ 5 L/min chez l'adulte au repos) "
+        "avec la fréquence cardiaque (exprimée en battements par minute, environ 60-80 bpm).\n"
+        "- Sois extrêmement précis sur les constantes biologiques et de secourisme.\n\n"
+        "Tu dois impérativement répondre sous la forme d'un objet JSON contenant exactement ces clés :\n"
+        "- 'question': La question posée sous forme de texte.\n"
+        "- 'options': Un tableau (Array) contenant exactement 4 propositions de réponses.\n"
+        "- 'reponse_correcte': Un entier (0, 1, 2 ou 3) représentant l'index de la bonne réponse.\n\n"
+        "Ne mets aucun texte explicatif avant ou après le JSON. Renvoie uniquement le JSON brut."
+    )
+    
+    user_prompt = (
+        "Génère une question de quiz portant au hasard sur : l'anatomie, la physiologie, "
+        "le secourisme de base, les soins infirmiers de base, la pharmacologie ou l'éthique médicale. "
+        "Fournis 4 options de réponse réalistes, dont une seule est incontestablement correcte."
     )
 
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Sauvegarde du chat_id pour pouvoir envoyer les questions suivantes plus tard
-    chat_id = update.effective_chat.id
-    context.user_data["chat_id"] = chat_id
-    
-    await context.bot.send_message(chat_id=chat_id, text="⏳ Génération des questions en cours...")
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
+    payload = {
+        "model": GROK_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "response_format": {"type": "json_object"},  # Force Groq à envoyer du JSON pur
+        "temperature": 0.6
+    }
+
+    # Système de retry (Backoff exponentiel) pour faire face aux surcharges temporaires de l'API
+    delays = [1, 2, 4, 8, 16]
+    async with aiohttp.ClientSession() as session:
+        for attempt, delay in enumerate(delays):
+            try:
+                async with session.post(GROQ_API_URL, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        content = result["choices"][0]["message"]["content"].strip()
+                        
+                        # Nettoyage de sécurité
+                        if content.startswith("```json"):
+                            content = content.split("```json")[1].split("```")[0].strip()
+                        elif content.startswith("```"):
+                            content = content.split("```")[1].split("```")[0].strip()
+
+                        quiz_data = json.loads(content)
+                        
+                        # Validation des clés requises
+                        if all(k in quiz_data for k in ["question", "options", "reponse_correcte"]):
+                            if len(quiz_data["options"]) == 4:
+                                return quiz_data
+                                
+                        logger.warning("Structure JSON invalide reçue de Groq. Nouvelle tentative...")
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Erreur API Groq (Code {response.status}): {error_text}")
+            except Exception as e:
+                logger.error(f"Exception lors de la génération de question (Tentative {attempt+1}): {e}")
+            
+            if attempt < len(delays) - 1:
+                await asyncio.sleep(delay)
+                
+    raise Exception("Impossible de générer une question correcte après plusieurs essais.")
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Message d'accueil lorsque l'utilisateur lance le bot."""
+    welcome_text = (
+        "🎯 *Bienvenue sur INFAS QUIZ !*\n\n"
+        "Ce bot vous aide à réviser votre concours d'entrée à l'INFAS grâce à l'IA Groq.\n\n"
+        "👉 Tapez la commande /quiz pour générer une question interactive."
+    )
+    await update.message.reply_text(welcome_text, parse_mode="Markdown")
+
+async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Génère la question et l'envoie sous forme de Quiz natif interactif."""
+    status_message = await update.message.reply_text("⏳ Génération de la question par Groq en cours...")
+    
     try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{
-                "role": "user", 
-                "content": (
-                    'Génère exactement 5 QCM sur les constantes vitales INFAS. '
-                    'Réponds UNIQUEMENT avec un tableau JSON valide, rien d\'autre. '
-                    'Pas de markdown, pas d\'explication. '
-                    'Format : [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"correct":0,"explication":"..."}]'
-                )
-            }],
-            temperature=0.5,
-            max_tokens=2000
+        # Appel de l'API de Groq
+        quiz_data = await generer_quiz_groq()
+        
+        question = quiz_data["question"]
+        options = quiz_data["options"]
+        reponse_correcte = quiz_data["reponse_correcte"]
+        
+        # On efface le message d'attente
+        await status_message.delete()
+        
+        # Envoi du quiz natif Telegram
+        await update.message.reply_poll(
+            question=question[:300],  # Limite Telegram : 300 caractères pour la question
+            options=[opt[:100] for opt in options],  # Limite Telegram : 100 caractères par option
+            correct_option_id=reponse_correcte,
+            type="quiz",
+            is_anonymous=False
+        )
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de la commande /quiz : {e}")
+        await status_message.edit_text(
+            "❌ Une erreur est survenue lors de la création du quiz.\n"
+            "Veuillez patienter quelques instants et réessayez avec /quiz !"
         )
 
-        text = response.choices[0].message.content.strip()
-
-        # Nettoyage renforcé du JSON
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
-        if json_match:
-            text = json_match.group(0)
-        
-        text = text.replace("```json", "").replace("```", "").strip()
-        questions = json.loads(text)
-
-        if not isinstance(questions, list) or len(questions) == 0:
-            raise ValueError("JSON invalide")
-
-        context.user_data["questions"] = questions
-        context.user_data["score"] = 0
-        context.user_data["current"] = 0
-
-        # Envoi de la première question
-        await send_question(context)
-
-    except Exception as e:
-        print(f"Erreur IA / JSON : {e}")
-        await context.bot.send_message(chat_id=chat_id, text="❌ L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
-
-async def send_question(context: ContextTypes.DEFAULT_TYPE):
-    chat_id = context.user_data.get("chat_id")
-    qs = context.user_data.get("questions", [])
-    i = context.user_data.get("current", 0)
-    total = len(qs)
-
-    # Si on a atteint la fin des questions
-    if i >= total:
-        s = context.user_data.get("score", 0)
-        pct = round(s / total * 100) if total > 0 else 0
-        mention = "Excellent ! Tu maîtrises bien ce chapitre ! 🎉" if pct >= 80 else "Bien ! Continue à réviser ! 👍" if pct >= 60 else "Revois ta fiche de cours 📚"
-        await context.bot.send_message(chat_id=chat_id, text=f"🏁 Quiz terminé !\nScore : {s}/{total} ({pct}%)\n{mention}\n\nTape /quiz pour un nouveau quiz.")
+def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("La variable d'environnement 'TOKEN' (ou 'TELEGRAM_TOKEN') est absente sur Railway. Le bot ne peut pas démarrer.")
+        return
+    if not GROQ_API_KEY:
+        logger.error("La variable d'environnement de votre clé d'API Groq est introuvable. Ajoutez 'GROQ_API_KEY' sur Railway.")
         return
 
-    q = qs[i]
-    cleaned_options = [opt[:100] for opt in q["options"]]
-    
-    await context.bot.reply_poll(
-        chat_id=chat_id,
-        question=f"Q{i+1}/{total} : {q['question']}",
-        options=cleaned_options,
-        type="quiz",
-        correct_option_id=int(q["correct"]),
-        explanation=q.get("explication", "")[:200],
-        is_anonymous=False
-    )
+    # Initialisation et configuration de l'application Telegram
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Cette fonction se déclenche automatiquement dès que l'étudiant clique sur une réponse.
-    """
-    poll_answer = update.poll_answer
-    
-    # Vérification si la réponse est correcte pour compter les points
-    qs = context.user_data.get("questions", [])
-    i = context.user_data.get("current", 0)
-    
-    if i < len(qs):
-        correct_id = int(qs[i]["correct"])
-        # Si l'utilisateur a choisi la bonne option, on augmente son score
-        if poll_answer.option_ids and poll_answer.option_ids[0] == correct_id:
-            context.user_data["score"] = context.user_data.get("score", 0) + 1
+    # Déclaration des commandes
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("quiz", quiz_command))
 
-    # On passe à l'index de la question suivante
-    context.user_data["current"] = i + 1
-    
-    # On attend 2 petites secondes pour laisser le temps à l'étudiant de lire l'explication Telegram
-    await asyncio.sleep(2)
-    
-    # On appelle la fonction pour envoyer automatiquement la question suivante
-    await send_question(context)
-
-async def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("quiz", quiz))
-    app.add_handler(PollAnswerHandler(handle_poll_answer))
-
-    print("🤖 Bot INFAS QUIZ démarré avec succès (Polling)")
-
-    await app.initialize()
-    await app.updater.start_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
-    await app.start()
-
-    while True:
-        await asyncio.sleep(3600)
+    logger.info("🤖 Bot INFAS QUIZ démarré avec succès sous Groq !")
+    application.run_polling()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot arrêté.")
+    main()
