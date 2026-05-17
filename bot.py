@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import asyncio
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
@@ -50,7 +51,6 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if json_match:
             text = json_match.group(0)
         
-        # Ligne corrigée et sécurisée : supprime proprement les balises markdown
         text = text.replace("```json", "").replace("```", "").strip()
         questions = json.loads(text)
 
@@ -82,7 +82,6 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = qs[i]
     
-    # Tronquer les options si elles dépassent la limite de Telegram (100 caractères max par option)
     cleaned_options = [opt[:100] for opt in q["options"]]
     
     await update.message.reply_poll(
@@ -90,19 +89,16 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         options=cleaned_options,
         type="quiz",
         correct_option_id=int(q["correct"]),
-        explanation=q.get("explication", "")[:200], # Limite Telegram pour l'explication
+        explanation=q.get("explication", "")[:200],
         is_anonymous=False
     )
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Fonction asynchrone pour gérer les réponses aux sondages.
-    Passe à la question suivante de manière fluide.
-    """
     current = context.user_data.get("current", 0)
     context.user_data["current"] = current + 1
 
-if __name__ == "__main__":
+async def main():
+    # Initialisation de l'application de manière moderne
     app = ApplicationBuilder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -111,8 +107,17 @@ if __name__ == "__main__":
 
     print("🤖 Bot INFAS QUIZ démarré avec succès (Polling)")
 
-    # Lancement standard et robuste du polling (gère nativement les reconnexions)
-    app.run_polling(
-        allowed_updates=["message", "poll_answer"],
-        drop_pending_updates=True
-    )
+    # Démarre le polling en arrière-plan
+    await app.initialize()
+    await app.updater.start_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
+    await app.start()
+
+    # 🛑 BOUCLE INFINIE : Maintient le conteneur Railway éveillé de force
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot arrêté.")
