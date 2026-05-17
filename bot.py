@@ -1,11 +1,9 @@
 import os
 import json
 import logging
-import asyncio
-import urllib.request
-import urllib.error
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from groq import Groq  # Import du SDK officiel de Groq
 
 # Configuration des logs pour Railway afin de suivre l'activité du bot en temps réel
 logging.basicConfig(
@@ -14,44 +12,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 1. RECUPERATION DES VARIABLES DE VOTRE RAILWAY
-# Lecture du Token Telegram (Votre variable s'appelle "TOKEN")
+# 1. RÉCUPÉRATION DES VARIABLES DE VOTRE RAILWAY
 TELEGRAM_TOKEN = os.getenv("TOKEN") or os.getenv("TELEGRAM_TOKEN")
 
-# Recherche intelligente de la clé Groq
+# Recherche de la clé Groq
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
-    # Si le nom exact n'est pas trouvé, on cherche une variable qui commence par "GROQ"
     for env_name, env_value in os.environ.items():
         if env_name.startswith("GROQ_"):
             GROQ_API_KEY = env_value
             logger.info(f"Clé Groq détectée automatiquement via la variable : {env_name}")
             break
 
-# Modèle Groq recommandé (très performant pour le JSON et la médecine)
+# Modèle Groq recommandé
 GROK_MODEL = "llama-3.3-70b-versatile"
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-
-def _executer_requete_groq(payload: dict, headers: dict) -> str:
-    """
-    Fonction synchrone exécutant l'appel à l'API de Groq via la bibliothèque native urllib.
-    Sera exécutée dans un thread séparé pour ne pas bloquer le bot.
-    """
-    data_bytes = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(GROQ_API_URL, data=data_bytes, headers=headers, method="POST")
-    
-    # Timeout de 15 secondes pour éviter de bloquer indéfiniment
-    with urllib.request.urlopen(req, timeout=15) as response:
-        return response.read().decode("utf-8")
+# Initialisation sécurisée du client officiel Groq
+# Le SDK gère nativement les en-têtes (User-Agent) pour éviter définitivement l'erreur 403 / 1010
+groq_client = None
+if GROQ_API_KEY:
+    groq_client = Groq(api_key=GROQ_API_KEY)
 
 
 async def generer_quiz_groq() -> dict:
     """
-    Appelle l'API de Groq pour générer une question médicale structurée.
-    Utilise le mode JSON de Groq et s'exécute de manière asynchrone non-bloquante.
+    Appelle l'API de Groq via le SDK officiel pour générer une question médicale structurée.
     """
-    if not GROQ_API_KEY:
+    if not groq_client:
         raise ValueError("La clé API Groq est introuvable dans vos variables de service Railway.")
 
     system_prompt = (
@@ -62,7 +49,7 @@ async def generer_quiz_groq() -> dict:
         "- Ne confonds jamais le débit cardiaque (exprimé en L/min, environ 5 L/min chez l'adulte au repos) "
         "avec la fréquence cardiaque (exprimée en battements par minute, environ 60-80 bpm).\n"
         "- Sois extrêmement précis sur les constantes biologiques et de secourisme.\n\n"
-        "Tu dois impérativement répondre sous la forme d'un objet JSON contenant exactement ces clés :\n"
+        "Tu devez impérativement répondre sous la forme d'un objet JSON contenant exactement ces clés :\n"
         "- 'question': La question posée sous forme de texte.\n"
         "- 'options': Un tableau (Array) contenant exactement 4 propositions de réponses.\n"
         "- 'reponse_correcte': Un entier (0, 1, 2 ou 3) représentant l'index de la bonne réponse.\n\n"
@@ -75,54 +62,32 @@ async def generer_quiz_groq() -> dict:
         "Fournis 4 options de réponse réalistes, dont une seule est incontestablement correcte."
     )
 
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "model": GROK_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "response_format": {"type": "json_object"},  # Force Groq à envoyer du JSON pur
-        "temperature": 0.6
-    }
-
-    # Système de retry (Backoff exponentiel) pour faire face aux surcharges temporaires de l'API
-    delays = [1, 2, 4, 8, 16]
-    for attempt, delay in enumerate(delays):
+    # Système de retry pour faire face aux surcharges temporaires de l'API
+    for attempt in range(3):
         try:
-            # On exécute l'appel réseau synchrone dans un thread asynchrone pour ne pas ralentir le bot
-            response_text = await asyncio.to_thread(_executer_requete_groq, payload, headers)
-            result = json.loads(response_text)
+            # Appel asynchrone non-bloquant de Groq avec le format JSON activé
+            completion = groq_client.chat.completions.create(
+                model=GROK_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.6
+            )
             
-            content = result["choices"][0]["message"]["content"].strip()
-            
-            # Nettoyage de sécurité au cas où l'IA encapsulerait son JSON
-            if content.startswith("```json"):
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif content.startswith("```"):
-                content = content.split("```")[1].split("```")[0].strip()
-
+            content = completion.choices[0].message.content.strip()
             quiz_data = json.loads(content)
             
-            # Validation des clés requises
+            # Validation de la structure reçue
             if all(k in quiz_data for k in ["question", "options", "reponse_correcte"]):
                 if len(quiz_data["options"]) == 4:
                     return quiz_data
                     
             logger.warning("Structure JSON invalide reçue de Groq. Nouvelle tentative...")
             
-        except urllib.error.HTTPError as e:
-            logger.error(f"Erreur HTTP Groq (Code {e.code}): {e.read().decode('utf-8', errors='ignore')}")
         except Exception as e:
-            logger.error(f"Exception lors de la génération de question (Tentative {attempt+1}): {e}")
-        
-        # Attente progressive avant de réessayer
-        if attempt < len(delays) - 1:
-            await asyncio.sleep(delay)
+            logger.error(f"Erreur lors de la génération Groq (Tentative {attempt+1}): {e}")
             
     raise Exception("Impossible de générer une question correcte après plusieurs essais.")
 
@@ -142,20 +107,20 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_message = await update.message.reply_text("⏳ Génération de la question par Groq en cours...")
     
     try:
-        # Appel de l'API de Groq
+        # Appel de la fonction de génération
         quiz_data = await generer_quiz_groq()
         
         question = quiz_data["question"]
         options = quiz_data["options"]
-        reponse_correcte = quiz_data["reponse_correcte"]
+        reponse_correcte = int(quiz_data["reponse_correcte"])
         
         # On efface le message d'attente
         await status_message.delete()
         
-        # Envoi du quiz natif Telegram
+        # Envoi du quiz natif interactif Telegram
         await update.message.reply_poll(
-            question=question[:300],  # Limite Telegram : 300 caractères pour la question
-            options=[opt[:100] for opt in options],  # Limite Telegram : 100 caractères par option
+            question=question[:300],  # Limites de sécurité de l'API Telegram
+            options=[opt[:100] for opt in options],
             correct_option_id=reponse_correcte,
             type="quiz",
             is_anonymous=False
@@ -171,20 +136,20 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not TELEGRAM_TOKEN:
-        logger.error("La variable d'environnement 'TOKEN' (ou 'TELEGRAM_TOKEN') est absente sur Railway. Le bot ne peut pas démarrer.")
+        logger.error("La variable d'environnement 'TOKEN' ou 'TELEGRAM_TOKEN' est absente sur Railway.")
         return
     if not GROQ_API_KEY:
-        logger.error("La variable d'environnement de votre clé d'API Groq est introuvable. Ajoutez 'GROQ_API_KEY' sur Railway.")
+        logger.error("La variable d'environnement 'GROQ_API_KEY' est introuvable sur Railway.")
         return
 
-    # Initialisation et configuration de l'application Telegram
+    # Initialisation de l'application Telegram
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # Déclaration des commandes
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("quiz", quiz_command))
 
-    logger.info("🤖 Bot INFAS QUIZ démarré avec succès sous Groq !")
+    logger.info("🤖 Bot INFAS QUIZ démarré avec succès sous Groq SDK !")
     application.run_polling()
 
 
