@@ -24,7 +24,7 @@ if not GROQ_API_KEY:
             GROQ_API_KEY = env_value
             break
 
-# CORRECTION DU MODÈLE GROQ : Utilisation du modèle versatile stable et supporté
+# MODÈLE GROQ : Utilisation du modèle stable et supporté
 GROK_MODEL = "llama-3.3-70b-versatile"
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
@@ -33,7 +33,7 @@ GROUP_SESSIONS = {}
 TEMPS_PAR_QUESTION = 25  
 NOMBRE_TOTAL_QUESTIONS = 45  
 
-# BANQUE DE QUESTIONS LOCALE ISSUE DIRECTEMENT DU MANUEL INFAS (Pages 223, 224 et Tests d'évaluation de la page 226)
+# BANQUE DE QUESTIONS LOCALE ISSUE DU MANUEL INFAS (Pages 223, 224 et Tests d'évaluation de la page 226)
 QUESTIONS_INFAS_SVT = [
     {
         "question": "Quel tissu cardiaque particulier possède la propriété de s'auto-exciter et de se contracter rythmiquement en l'absence de toute innervation ?",
@@ -129,7 +129,7 @@ async def generer_quiz_groq() -> dict:
         completion = groq_client.chat.completions.create(
             model=GROK_MODEL,
             messages=[
-                {"role": "system", "system_prompt"},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
             response_format={"type": "json_object"},
@@ -153,6 +153,146 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         await afficher_classement_final(context, chat_id)
         return
 
+    # CORRIGÉ : La chaîne de caractères est maintenant propre et sur une seule ligne
     msg_attente = await context.bot.send_message(
         chat_id=chat_id, 
-        text=f"⏳ *Préparation de
+        text=f"⏳ *Préparation de la question {session['current_quiz_index']}/{session['total_questions']}...*",
+        parse_mode="Markdown"
+    )
+    
+    quiz_data = None
+    
+    # 1. Priorité aux questions issues des leçons du manuel
+    questions_disponibles = [q for q in QUESTIONS_INFAS_SVT if q["question"] not in session["questions_utilisees"]]
+    
+    if questions_disponibles:
+        quiz_data = random.choice(questions_disponibles)
+        session["questions_utilisees"].append(quiz_data["question"])
+        logger.info(f"Question du manuel local sélectionnée pour le groupe {chat_id}")
+    else:
+        # 2. Relais fluide par Groq avec le modèle fonctionnel
+        logger.info("Banque manuelle épuisée pour cette session, transition vers Groq IA.")
+        quiz_data = await generer_quiz_groq()
+
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=msg_attente.message_id)
+    except Exception:
+        pass
+
+    if not quiz_data:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Problème temporaire avec le serveur IA, passage à la question suivante...")
+        await asyncio.sleep(2)
+        await envoyer_question_groupe(context, chat_id)
+        return
+
+    session["correct_option_id"] = int(quiz_data["reponse_correcte"])
+
+    try:
+        await context.bot.send_poll(
+            chat_id=chat_id,
+            question=f"❓ [Q.{session['current_quiz_index']}/{session['total_questions']}] {quiz_data['question']}"[:300],
+            options=[opt[:100] for opt in quiz_data["options"]],
+            correct_option_id=session["correct_option_id"],
+            type="quiz",
+            is_anonymous=False,
+            open_period=TEMPS_PAR_QUESTION
+        )
+    except Exception as e:
+        logger.error(f"Erreur d'envoi du sondage : {e}")
+        await envoyer_question_groupe(context, chat_id)
+        return
+    
+    # Pause calée sur le chronomètre de 25s + latence
+    await asyncio.sleep(TEMPS_PAR_QUESTION + 2)
+    await envoyer_question_groupe(context, chat_id)
+
+
+async def recevoir_reponse_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enregistre les points des membres du groupe lorsqu'ils répondent correctement."""
+    answer = update.poll_answer
+    
+    for chat_id, session in GROUP_SESSIONS.items():
+        if "correct_option_id" in session:
+            if answer.option_ids and answer.option_ids[0] == session["correct_option_id"]:
+                user_id = answer.user.id
+                user_name = answer.user.first_name
+                
+                if user_id not in session["scores"]:
+                    session["scores"][user_id] = {"name": user_name, "points": 0}
+                
+                session["scores"][user_id]["points"] += 1
+                break
+
+
+async def start_quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Démarre une session de quiz chronométrée pour le groupe."""
+    chat_id = update.effective_chat.id
+    
+    if chat_id in GROUP_SESSIONS:
+        await update.message.reply_text("⚠️ Un quiz est déjà en cours dans ce groupe. Laissez-le se terminer !")
+        return
+
+    GROUP_SESSIONS[chat_id] = {
+        "scores": {},
+        "current_quiz_index": 0,
+        "total_questions": NOMBRE_TOTAL_QUESTIONS,
+        "questions_utilisees": []
+    }
+    
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🏁 *Lancement du Grand Marathon INFAS QUIZ !*\n\n"
+                 f"• Nombre de questions : *{NOMBRE_TOTAL_QUESTIONS}*\n"
+                 f"• Chronomètre : *{TEMPS_PAR_QUESTION} secondes* par question.\n\n"
+                 "Concentrez-vous, la première question s'affiche dans un instant !",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Erreur commande d'initialisation : {e}")
+    
+    asyncio.create_task(envoyer_question_groupe(context, chat_id))
+
+
+async def afficher_classement_final(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Calcule et affiche le tableau des scores à la fin du jeu."""
+    session = GROUP_SESSIONS.get(chat_id)
+    if not session:
+        return
+
+    texte_classement = "🏆 *FIN DU MARATHON - CLASSEMENT DES AGENTS DE SANTÉ* 🏆\n\n"
+    
+    if not session["scores"]:
+        texte_classement += "😢 Aucun point n'a été enregistré pendant cette session."
+    else:
+        joueurs_tries = sorted(session["scores"].values(), key=lambda x: x["points"], reverse=True)
+        
+        medailles = ["🥇", "🥈", "🥉"]
+        for i, joueur in enumerate(joueurs_tries):
+            prefixe = medailles[i] if i < 3 else "🔹"
+            texte_classement += f"{prefixe} *{joueur['name']}* : {joueur['points']}/{session['total_questions']} points\n"
+
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=texte_classement, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Erreur lors de la diffusion du classement final : {e}")
+        
+    GROUP_SESSIONS.pop(chat_id, None)
+
+
+def main():
+    if not TELEGRAM_TOKEN:
+        logger.error("Le Token de votre bot Telegram n'a pas été trouvé.")
+        return
+
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    application.add_handler(CommandHandler("quiz", start_quiz_command))
+    application.add_handler(PollAnswerHandler(recevoir_reponse_quiz))
+
+    logger.info("🤖 Bot INFAS Marathon (45 questions / 25s) démarré avec succès !")
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
