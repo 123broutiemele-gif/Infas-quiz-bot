@@ -2,7 +2,8 @@ import os
 import json
 import logging
 import asyncio
-import aiohttp
+import urllib.request
+import urllib.error
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -31,10 +32,24 @@ if not GROQ_API_KEY:
 GROK_MODEL = "llama-3.3-70b-versatile"
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+
+def _executer_requete_groq(payload: dict, headers: dict) -> str:
+    """
+    Fonction synchrone exécutant l'appel à l'API de Groq via la bibliothèque native urllib.
+    Sera exécutée dans un thread séparé pour ne pas bloquer le bot.
+    """
+    data_bytes = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(GROQ_API_URL, data=data_bytes, headers=headers, method="POST")
+    
+    # Timeout de 15 secondes pour éviter de bloquer indéfiniment
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return response.read().decode("utf-8")
+
+
 async def generer_quiz_groq() -> dict:
     """
     Appelle l'API de Groq pour générer une question médicale structurée.
-    Utilise le mode JSON de Groq pour garantir un format 100% valide.
+    Utilise le mode JSON de Groq et s'exécute de manière asynchrone non-bloquante.
     """
     if not GROQ_API_KEY:
         raise ValueError("La clé API Groq est introuvable dans vos variables de service Railway.")
@@ -77,38 +92,40 @@ async def generer_quiz_groq() -> dict:
 
     # Système de retry (Backoff exponentiel) pour faire face aux surcharges temporaires de l'API
     delays = [1, 2, 4, 8, 16]
-    async with aiohttp.ClientSession() as session:
-        for attempt, delay in enumerate(delays):
-            try:
-                async with session.post(GROQ_API_URL, json=payload, headers=headers) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        content = result["choices"][0]["message"]["content"].strip()
-                        
-                        # Nettoyage de sécurité
-                        if content.startswith("```json"):
-                            content = content.split("```json")[1].split("```")[0].strip()
-                        elif content.startswith("```"):
-                            content = content.split("```")[1].split("```")[0].strip()
-
-                        quiz_data = json.loads(content)
-                        
-                        # Validation des clés requises
-                        if all(k in quiz_data for k in ["question", "options", "reponse_correcte"]):
-                            if len(quiz_data["options"]) == 4:
-                                return quiz_data
-                                
-                        logger.warning("Structure JSON invalide reçue de Groq. Nouvelle tentative...")
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Erreur API Groq (Code {response.status}): {error_text}")
-            except Exception as e:
-                logger.error(f"Exception lors de la génération de question (Tentative {attempt+1}): {e}")
+    for attempt, delay in enumerate(delays):
+        try:
+            # On exécute l'appel réseau synchrone dans un thread asynchrone pour ne pas ralentir le bot
+            response_text = await asyncio.to_thread(_executer_requete_groq, payload, headers)
+            result = json.loads(response_text)
             
-            if attempt < len(delays) - 1:
-                await asyncio.sleep(delay)
-                
+            content = result["choices"][0]["message"]["content"].strip()
+            
+            # Nettoyage de sécurité au cas où l'IA encapsulerait son JSON
+            if content.startswith("```json"):
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif content.startswith("```"):
+                content = content.split("```")[1].split("```")[0].strip()
+
+            quiz_data = json.loads(content)
+            
+            # Validation des clés requises
+            if all(k in quiz_data for k in ["question", "options", "reponse_correcte"]):
+                if len(quiz_data["options"]) == 4:
+                    return quiz_data
+                    
+            logger.warning("Structure JSON invalide reçue de Groq. Nouvelle tentative...")
+            
+        except urllib.error.HTTPError as e:
+            logger.error(f"Erreur HTTP Groq (Code {e.code}): {e.read().decode('utf-8', errors='ignore')}")
+        except Exception as e:
+            logger.error(f"Exception lors de la génération de question (Tentative {attempt+1}): {e}")
+        
+        # Attente progressive avant de réessayer
+        if attempt < len(delays) - 1:
+            await asyncio.sleep(delay)
+            
     raise Exception("Impossible de générer une question correcte après plusieurs essais.")
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Message d'accueil lorsque l'utilisateur lance le bot."""
@@ -118,6 +135,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👉 Tapez la commande /quiz pour générer une question interactive."
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
+
 
 async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Génère la question et l'envoie sous forme de Quiz natif interactif."""
@@ -150,6 +168,7 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Veuillez patienter quelques instants et réessayez avec /quiz !"
         )
 
+
 def main():
     if not TELEGRAM_TOKEN:
         logger.error("La variable d'environnement 'TOKEN' (ou 'TELEGRAM_TOKEN') est absente sur Railway. Le bot ne peut pas démarrer.")
@@ -167,6 +186,7 @@ def main():
 
     logger.info("🤖 Bot INFAS QUIZ démarré avec succès sous Groq !")
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()
