@@ -29,8 +29,8 @@ groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 # Structure pour stocker l'état du quiz par groupe
 # { chat_id: { "scores": {user_id: {"name": str, "points": int}}, "current_quiz_index": int, "total_questions": int, "correct_option_id": int } }
 GROUP_SESSIONS = {}
-TEMPS_PAR_QUESTION = 30  # Durée en secondes pour répondre à chaque question
-NOMBRE_TOTAL_QUESTIONS = 5  # Nombre de questions par session de quiz
+TEMPS_PAR_QUESTION = 25  # Durée en secondes pour répondre à chaque question
+NOMBRE_TOTAL_QUESTIONS = 45  # Nombre de questions par session de quiz
 
 
 async def generer_quiz_groq() -> dict:
