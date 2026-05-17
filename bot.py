@@ -24,16 +24,16 @@ if not GROQ_API_KEY:
             GROQ_API_KEY = env_value
             break
 
-# Modèle Groq stable
-GROK_MODEL = "llama-3.3-70b-specdec"
+# CORRECTION DU MODÈLE GROQ : Utilisation du modèle versatile stable et supporté
+GROK_MODEL = "llama-3.3-70b-versatile"
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-# CONFIGURATION DU QUIZ (MISES À JOUR)
+# CONFIGURATION DU QUIZ
 GROUP_SESSIONS = {}
-TEMPS_PAR_QUESTION = 25  # Changement : 25 secondes par question
-NOMBRE_TOTAL_QUESTIONS = 45  # Changement : 45 questions au total
+TEMPS_PAR_QUESTION = 25  
+NOMBRE_TOTAL_QUESTIONS = 45  
 
-# BANQUE DE QUESTIONS LOCALE (SVT - LE COEUR ET SA REGULATION)
+# BANQUE DE QUESTIONS LOCALE ISSUE DIRECTEMENT DU MANUEL INFAS (Pages 223, 224 et Tests d'évaluation de la page 226)
 QUESTIONS_INFAS_SVT = [
     {
         "question": "Quel tissu cardiaque particulier possède la propriété de s'auto-exciter et de se contracter rythmiquement en l'absence de toute innervation ?",
@@ -67,7 +67,7 @@ QUESTIONS_INFAS_SVT = [
     },
     {
         "question": "Quel effet produit l'excitation du nerf vague (ou nerf pneumogastrique X) sur l'activité du cœur ?",
-        "options": ["Une tachycardie immédiate", "Une augmentation de la force des contractions", "Une bradycardie par ralentissement du rythme grandiose", "Une interruption définitive de l'automatisme"],
+        "options": ["Une tachycardie immédiate", "Une augmentation de la force des contractions", "Une bradycardie par ralentissement du rythme cardiaque", "Une interruption définitive de l'automatisme"],
         "reponse_correcte": 2
     },
     {
@@ -89,13 +89,29 @@ QUESTIONS_INFAS_SVT = [
         "question": "Quelle est la conséquence directe de la libération de noradrénaline au niveau du myocarde ?",
         "options": ["Une tachycardie (accélération du rythme cardiaque)", "Une bradycardie (ralentissement du rythme cardiaque)", "La relaxation totale et immédiate des parois ventriculaires", "L'inhibition des centres cardio-accélérateurs bulbaires"],
         "reponse_correcte": 0
+    },
+    {
+        "question": "[Manuel p.226] L'élément cité ci-dessous est une partie du néphron :",
+        "options": ["Le tube contourné proximal", "La capsule de Bowman", "L'Anse de Henlé", "Toutes les réponses sont correctes"],
+        "reponse_correcte": 3
+    },
+    {
+        "question": "[Manuel p.226] Une systole est :",
+        "options": ["Un relâchement cardiaque", "Une contraction cardiaque", "Une pause globale du cœur", "Une baisse de la pression artérielle"],
+        "reponse_correcte": 1
+    },
+    {
+        "question": "[Manuel p.226] L'acétylcholine est le médiateur chimique du nerf X. Son action :",
+        "options": ["Entraîne une tachycardie au niveau du cœur", "Entraîne une bradycardie au niveau du cœur", "Augmente la force de contraction ventriculaire", "N'a aucun effet sur le tissu nodal"],
+        "reponse_correcte": 1
     }
 ]
 
 
 async def generer_quiz_groq() -> dict:
-    """Appelle l'API de Groq en cas de secours pour générer un QCM au format JSON."""
+    """Appelle l'API de Groq pour générer un QCM au format JSON."""
     if not groq_client:
+        logger.error("Client Groq non initialisé.")
         return None
         
     system_prompt = (
@@ -104,24 +120,24 @@ async def generer_quiz_groq() -> dict:
         "- 'question': La question posée sous forme de texte.\n"
         "- 'options': Un tableau contenant exactement 4 propositions de réponses.\n"
         "- 'reponse_correcte': Un entier (0, 1, 2 ou 3) représentant l'index de la bonne réponse.\n\n"
-        "Génère une question sur la pharmacologie, l'éthique médicale, la santé publique, le secourisme de base ou l'anatomie.\n"
+        "Génère une question portant sur la santé publique, l'anatomie humaine, la pharmacologie de base, l'obstétrique ou le secourisme.\n"
         "Renvoie uniquement le JSON brut, sans fioritures."
     )
-    user_prompt = "Génère une question de quiz de niveau concours de santé."
+    user_prompt = "Génère une question de QCM difficile de niveau concours INFAS."
 
     try:
         completion = groq_client.chat.completions.create(
             model=GROK_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "system_prompt"},
                 {"role": "user", "content": user_prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.7
+            temperature=0.65
         )
         return json.loads(completion.choices[0].message.content.strip())
     except Exception as e:
-        logger.error(f"Erreur Groq: {e}")
+        logger.error(f"Erreur lors de la requête Groq : {e}")
         return None
 
 
@@ -133,150 +149,10 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
     session = GROUP_SESSIONS[chat_id]
     session["current_quiz_index"] += 1
     
-    # Si on a atteint le nombre maximum de questions, on affiche le classement final
     if session["current_quiz_index"] > session["total_questions"]:
         await afficher_classement_final(context, chat_id)
         return
 
     msg_attente = await context.bot.send_message(
         chat_id=chat_id, 
-        text=f"⏳ *Préparation de la question {session['current_quiz_index']}/{session['total_questions']}...*",
-        parse_mode="Markdown"
-    )
-    
-    quiz_data = None
-    
-    # 1. On essaie d'abord de vider la banque de questions SVT locale
-    questions_disponibles = [q for q in QUESTIONS_INFAS_SVT if q["question"] not in session["questions_utilisees"]]
-    
-    if questions_disponibles:
-        quiz_data = random.choice(questions_disponibles)
-        session["questions_utilisees"].append(quiz_data["question"])
-        logger.info(f"Question locale sélectionnée pour le groupe {chat_id}")
-    else:
-        # 2. Une fois épuisée (après 10 questions), Groq prend automatiquement le relais
-        logger.info("Banque locale épuisée ou indisponible, appel à Groq IA.")
-        quiz_data = await generer_quiz_groq()
-
-    # Nettoyage du message d'attente
-    try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=msg_attente.message_id)
-    except Exception:
-        pass
-
-    if not quiz_data:
-        await context.bot.send_message(chat_id=chat_id, text="❌ Erreur de génération, passage à la question suivante.")
-        await envoyer_question_groupe(context, chat_id)
-        return
-
-    session["correct_option_id"] = int(quiz_data["reponse_correcte"])
-
-    # Envoi du Quiz Telegram natif fermé automatiquement après 25 secondes
-    try:
-        poll_msg = await context.bot.send_poll(
-            chat_id=chat_id,
-            question=f"❓ [Q.{session['current_quiz_index']}] {quiz_data['question']}"[:300],
-            options=[opt[:100] for opt in quiz_data["options"]],
-            correct_option_id=session["correct_option_id"],
-            type="quiz",
-            is_anonymous=False,
-            open_period=TEMPS_PAR_QUESTION
-        )
-    except Exception as e:
-        logger.error(f"Erreur d'envoi du sondage : {e}")
-        await envoyer_question_groupe(context, chat_id)
-        return
-    
-    # Attente dynamique calée sur vos 25 secondes + 2s de transition réseau
-    await asyncio.sleep(TEMPS_PAR_QUESTION + 2)
-    await envoyer_question_groupe(context, chat_id)
-
-
-async def recevoir_reponse_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enregistre les points des membres du groupe lorsqu'ils répondent correctement."""
-    answer = update.poll_answer
-    
-    for chat_id, session in GROUP_SESSIONS.items():
-        if "correct_option_id" in session:
-            if answer.option_ids and answer.option_ids[0] == session["correct_option_id"]:
-                user_id = answer.user.id
-                user_name = answer.user.first_name
-                
-                if user_id not in session["scores"]:
-                    session["scores"][user_id] = {"name": user_name, "points": 0}
-                
-                session["scores"][user_id]["points"] += 1
-                break
-
-
-async def start_quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Démarre une session de quiz chronométrée pour le groupe."""
-    chat_id = update.effective_chat.id
-    
-    # Initialisation de la session de ce groupe
-    GROUP_SESSIONS[chat_id] = {
-        "scores": {},
-        "current_quiz_index": 0,
-        "total_questions": NOMBRE_TOTAL_QUESTIONS,
-        "questions_utilisees": []
-    }
-    
-    try:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🏁 *Lancement du Grand Marathon INFAS QUIZ !*\n\n"
-                 f"• Total de questions : *{NOMBRE_TOTAL_QUESTIONS}*\n"
-                 f"• Chronomètre : *{TEMPS_PAR_QUESTION} secondes* par question.\n\n"
-                 "Bonne chance à tous les futurs agents de santé ! Préparez-vous...",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        logger.error(f"Erreur lors de l'initialisation du message /quiz: {e}")
-    
-    # Lance la première question en arrière-plan
-    asyncio.create_task(envoyer_question_groupe(context, chat_id))
-
-
-async def afficher_classement_final(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Calcule et affiche le tableau des scores à la fin du jeu."""
-    session = GROUP_SESSIONS.get(chat_id)
-    if not session:
-        return
-
-    texte_classement = "🏆 *FIN DU MARATHON - CLASSEMENT DES AGENTS DE SANTÉ* 🏆\n\n"
-    
-    if not session["scores"]:
-        texte_classement += "😢 Aucun point n'a été marqué durant ce marathon."
-    else:
-        joueurs_tries = sorted(session["scores"].values(), key=lambda x: x["points"], reverse=True)
-        
-        medailles = ["🥇", "🥈", "🥉"]
-        for i, joueur in enumerate(joueurs_tries):
-            prefixe = medailles[i] if i < 3 else "🔹"
-            texte_classement += f"{prefixe} *{joueur['name']}* : {joueur['points']}/{session['total_questions']} points\n"
-
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=texte_classement, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Erreur envoi classement : {e}")
-        
-    # Nettoyage de la mémoire
-    GROUP_SESSIONS.pop(chat_id, None)
-
-
-def main():
-    if not TELEGRAM_TOKEN:
-        logger.error("Le Token Telegram est manquant dans les variables d'environnement.")
-        return
-
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    application.add_handler(CommandHandler("quiz", start_quiz_command))
-    application.add_handler(PollAnswerHandler(recevoir_reponse_quiz))
-
-    logger.info("🤖 Bot INFAS QUIZ de Groupe configuré pour un marathon de 45 questions !")
-    application.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+        text=f"⏳ *Préparation de
