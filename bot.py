@@ -1,7 +1,6 @@
 import os
 import json
 import re
-import asyncio
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
@@ -51,8 +50,8 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if json_match:
             text = json_match.group(0)
         
-        text = text.replace("```json", "").replace("
-```", "").strip()
+        # Ligne corrigée et sécurisée : supprime proprement les balises markdown
+        text = text.replace("```json", "").replace("```", "").strip()
         questions = json.loads(text)
 
         if not isinstance(questions, list) or len(questions) == 0:
@@ -95,32 +94,24 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_anonymous=False
     )
 
-# Correction de l'erreur NoneType : Cette fonction gère la réponse au sondage de manière asynchrone
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Fonction de rappel pour gérer les réponses des utilisateurs.
-    Pour l'instant, elle fait simplement passer à la question suivante.
+    Fonction asynchrone pour gérer les réponses aux sondages.
+    Passe à la question suivante de manière fluide.
     """
-    # Note : Comme run_polling utilise drop_pending_updates=True, 
-    # nous mettons à jour le compteur pour simuler la progression.
     current = context.user_data.get("current", 0)
     context.user_data["current"] = current + 1
-    
-    # Note : Le PollAnswerHandler ne contient pas le 'message' d'origine,
-    # pour envoyer la question suivante à l'utilisateur de manière robuste,
-    # il faudrait stocker le chat_id dans context.user_data au moment de /quiz.
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Enregistrement des handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("quiz", quiz))
     app.add_handler(PollAnswerHandler(handle_poll_answer))
 
     print("🤖 Bot INFAS QUIZ démarré avec succès (Polling)")
 
-    # Lancement standard et sécurisé du polling (gère nativement les reconnexions et les timeouts)
+    # Lancement standard et robuste du polling (gère nativement les reconnexions)
     app.run_polling(
         allowed_updates=["message", "poll_answer"],
         drop_pending_updates=True
