@@ -5,7 +5,6 @@ import asyncio
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, PollAnswerHandler, ContextTypes
-from telegram.error import Conflict, TimedOut
 
 # ==================== CONFIGURATION ====================
 TOKEN = os.environ.get("TOKEN")
@@ -26,7 +25,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Génération des questions en cours...")
+    # Sauvegarde du chat_id pour pouvoir envoyer les questions suivantes plus tard
+    chat_id = update.effective_chat.id
+    context.user_data["chat_id"] = chat_id
+    
+    await context.bot.send_message(chat_id=chat_id, text="⏳ Génération des questions en cours...")
 
     try:
         response = client.chat.completions.create(
@@ -60,31 +63,33 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["questions"] = questions
         context.user_data["score"] = 0
         context.user_data["current"] = 0
-        context.user_data["polls"] = {}
 
-        await send_question(update, context)
+        # Envoi de la première question
+        await send_question(context)
 
     except Exception as e:
         print(f"Erreur IA / JSON : {e}")
-        await update.message.reply_text("❌ L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
+        await context.bot.send_message(chat_id=chat_id, text="❌ L'IA n'a pas renvoyé un JSON valide. Réessayez avec /quiz.")
 
-async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_question(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.user_data.get("chat_id")
     qs = context.user_data.get("questions", [])
     i = context.user_data.get("current", 0)
     total = len(qs)
 
+    # Si on a atteint la fin des questions
     if i >= total:
         s = context.user_data.get("score", 0)
         pct = round(s / total * 100) if total > 0 else 0
         mention = "Excellent ! Tu maîtrises bien ce chapitre ! 🎉" if pct >= 80 else "Bien ! Continue à réviser ! 👍" if pct >= 60 else "Revois ta fiche de cours 📚"
-        await update.message.reply_text(f"🏁 Quiz terminé !\nScore : {s}/{total} ({pct}%)\n{mention}\n\nTape /quiz pour un nouveau quiz.")
+        await context.bot.send_message(chat_id=chat_id, text=f"🏁 Quiz terminé !\nScore : {s}/{total} ({pct}%)\n{mention}\n\nTape /quiz pour un nouveau quiz.")
         return
 
     q = qs[i]
-    
     cleaned_options = [opt[:100] for opt in q["options"]]
     
-    await update.message.reply_poll(
+    await context.bot.reply_poll(
+        chat_id=chat_id,
         question=f"Q{i+1}/{total} : {q['question']}",
         options=cleaned_options,
         type="quiz",
@@ -94,11 +99,31 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    current = context.user_data.get("current", 0)
-    context.user_data["current"] = current + 1
+    """
+    Cette fonction se déclenche automatiquement dès que l'étudiant clique sur une réponse.
+    """
+    poll_answer = update.poll_answer
+    
+    # Vérification si la réponse est correcte pour compter les points
+    qs = context.user_data.get("questions", [])
+    i = context.user_data.get("current", 0)
+    
+    if i < len(qs):
+        correct_id = int(qs[i]["correct"])
+        # Si l'utilisateur a choisi la bonne option, on augmente son score
+        if poll_answer.option_ids and poll_answer.option_ids[0] == correct_id:
+            context.user_data["score"] = context.user_data.get("score", 0) + 1
+
+    # On passe à l'index de la question suivante
+    context.user_data["current"] = i + 1
+    
+    # On attend 2 petites secondes pour laisser le temps à l'étudiant de lire l'explication Telegram
+    await asyncio.sleep(2)
+    
+    # On appelle la fonction pour envoyer automatiquement la question suivante
+    await send_question(context)
 
 async def main():
-    # Initialisation de l'application de manière moderne
     app = ApplicationBuilder().token(TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -107,12 +132,10 @@ async def main():
 
     print("🤖 Bot INFAS QUIZ démarré avec succès (Polling)")
 
-    # Démarre le polling en arrière-plan
     await app.initialize()
     await app.updater.start_polling(allowed_updates=["message", "poll_answer"], drop_pending_updates=True)
     await app.start()
 
-    # 🛑 BOUCLE INFINIE : Maintient le conteneur Railway éveillé de force
     while True:
         await asyncio.sleep(3600)
 
