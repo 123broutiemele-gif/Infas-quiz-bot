@@ -34,7 +34,7 @@ NOMBRE_TOTAL_QUESTIONS = 50
 HISTORIQUE_FILE = "historique_questions.json"
 
 # BANQUE DE QUESTIONS : 1ère ANNÉE SOINS OBSTÉRICAUX (INFAS)
-# "temps": 45 pour les questions simples, 60 pour les cas pratiques/calculs
+# Toutes les terminologies sont validées en français médical
 QUESTIONS_INFAS_SVT = [
     {
         "question": "[Anatomie] Quel diamètre du détroit supérieur (DS) mesure normalement 10,5 cm et constitue le diamètre utile ou chirurgical du bassin osseux ?",
@@ -61,19 +61,25 @@ QUESTIONS_INFAS_SVT = [
         "temps": 45
     },
     {
-        "question": "[Obstétrique] À partir de quel repère anatomique précis mesure-t-on la hauteur utérine (HU) lors de l'examen clinique d'une femme enceinte ?",
+        "question": "[Sémiologie Obstétricale] À partir de quel repère anatomique précis mesure-t-on la hauteur utérine (HU) lors de l'examen clinique d'une femme enceinte ?",
         "options": ["L'ombilic", "L'appendice xiphoïde", "Le bord supérieur de la symphyse pubienne", "L'épine iliaque antéro-supérieure"],
         "reponse_correcte": 2,
         "temps": 45
     },
     {
-        "question": "[Obstétrique] À combien de semaines d'aménorrhée (SA) correspond le terme théorique d'une grossesse normale en Côte d'Ivoire ?",
+        "question": "[Sémiologie Obstétricale] À combien de semaines d'aménorrhée (SA) correspond le terme théorique d'une grossesse normale en Côte d'Ivoire ?",
         "options": ["37 SA", "39 SA", "41 SA", "45 SA"],
         "reponse_correcte": 2,
         "temps": 45
     },
     {
-        "question": "[Obstétrique] Quelle hormone, sécrétée par le syncytiotrophoblaste, maintient le corps jaune au début de la grossesse et sert de base aux tests de grossesse ?",
+        "question": "[Sémiologie Obstétricale] Quel terme médical francophone décrit la première perception par la femme enceinte des mouvements actifs du fœtus (MAF) ?",
+        "options": ["Le frémissement", "La dérive", "La nidation", "L'allègement"],
+        "reponse_correcte": 0,
+        "temps": 45
+    },
+    {
+        "question": "[Sémiologie Obstétricale] Quelle hormone, sécrétée par le syncytiotrophoblaste, maintient le corps jaune au début de la grossesse et sert de base aux tests de grossesse ?",
         "options": ["L'hCG (Hormone Chorionique Gonadotrope)", "L'hPL (Hormone Lactogène Placentaire)", "La Progestérone", "L'Oestriol"],
         "reponse_correcte": 0,
         "temps": 45
@@ -133,11 +139,14 @@ async def generer_quiz_groq(questions_exclues: list) -> dict:
         logger.error("Client Groq non initialisé.")
         return None
         
-    exclues_str = "\n".join([f"- {q}" for q in questions_exclues[-20:]]) # Lui donner les dernières questions pour l'orienter
+    exclues_str = "\n".join([f"- {q}" for q in questions_exclues[-20:]])
         
     system_prompt = (
-        "Tu es un formateur expert à l'INFAS, spécialisé dans la filière Soins Obstétricaux (Sages-femmes / Maïeuticiens).\n"
+        "Tu es un formateur expert à l'INFAS, spécialisé dans la filière Soins Obstétricaux (Sages-femmes / Maïeuticiens) en Côte d'Ivoire.\n"
         "Tu prépares une évaluation pour les étudiants de Première Année.\n\n"
+        "INTERDICTION STRICTE : N'utilise JAMAIS de termes médicaux ou d'expressions en anglais (comme 'Quickening', etc.). "
+        "Toutes les questions, options de réponse et concepts doivent employer EXCLUSIVEMENT la terminologie médicale officielle en français francophone "
+        "(ex: mouvements actifs fœtaux, hauteur utérine, bruits du cœur fœtal, etc.).\n\n"
         "Tu dois impérativement répondre sous la forme d'un objet JSON contenant exactement ces clés :\n"
         "- 'question': La question posée sous forme de texte.\n"
         "- 'options': Un tableau contenant exactement 4 propositions de réponses.\n"
@@ -149,7 +158,7 @@ async def generer_quiz_groq(questions_exclues: list) -> dict:
         "Utilise l'un de ces préfixes : [Anatomie], [Physiologie], [Sémiologie Obstétricale], [Calcul de Doses] ou [Santé de la Reproduction].\n"
         "Renvoie uniquement le JSON brut, sans introduction ni conclusion."
     )
-    user_prompt = "Génère une question de niveau 1ère année Soins Obstétricaux INFAS. Choisis librement entre une question simple (45s) ou un cas pratique complexe (60s)."
+    user_prompt = "Génère une question de niveau 1ère année Soins Obstétricaux INFAS en français médical strict."
 
     try:
         completion = groq_client.chat.completions.create(
@@ -159,7 +168,7 @@ async def generer_quiz_groq(questions_exclues: list) -> dict:
                 {"role": "user", "content": user_prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.85 # Température légèrement augmentée pour favoriser la nouveauté
+            temperature=0.85
         )
         return json.loads(completion.choices[0].message.content.strip())
     except Exception as e:
@@ -191,7 +200,7 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
     historique_global = charger_historique_global()
     quiz_data = None
     
-    # Filtrer les questions locales qui n'ont JAMAIS été posées (séance actuelle ET anciennes séances)
+    # Filtrer les questions locales qui n'ont JAMAIS été posées
     questions_disponibles = [q for q in QUESTIONS_INFAS_SVT if q["question"] not in historique_global]
     
     if questions_disponibles and random.random() > 0.40:  
@@ -200,10 +209,8 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         logger.info(f"Question locale inédite sélectionnée pour le groupe {chat_id}")
     else:
         logger.info("Génération d'une question inédite via Groq IA.")
-        # On passe l'historique à l'IA pour qu'elle n'invente pas un doublon
         quiz_data = await generer_quiz_groq(historique_global)
         if quiz_data:
-            # Vérification de sécurité si l'IA génère malgré tout un doublon historique
             if quiz_data["question"] in historique_global:
                 logger.warning("L'IA a généré une question déjà existante. Tentative de repli.")
                 quiz_data = None
@@ -215,24 +222,21 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
     except Exception:
         pass
 
-    # Système de secours si l'IA échoue ou donne un doublon
+    # Système de secours
     if not quiz_data:
         if questions_disponibles:
             quiz_data = random.choice(questions_disponibles)
             sauvegarder_dans_historique_global(quiz_data["question"])
         else:
-            # Si TOUTES les questions locales ont été épuisées à travers le temps
             await context.bot.send_message(
                 chat_id=chat_id, 
-                text="⚠️ La banque de questions locale est saturée d'anciens sujets. Génération forcée d'une nouvelle situation clinique..."
+                text="⚠️ La banque locale est épuisée. Génération d'une nouvelle situation clinique..."
             )
-            # Retentative unique avec l'IA
             quiz_data = await generer_quiz_groq(historique_global)
             if not quiz_data:
-                # Secours ultime (on pioche n'importe où pour ne pas bloquer le bot)
                 quiz_data = random.choice(QUESTIONS_INFAS_SVT)
                 
-    # Récupération et application du temps dynamique (45 ou 60 secondes)
+    # Récupération et application du temps dynamique
     temps_allocation = int(quiz_data.get("temps", 45))
     session["correct_option_id"] = int(quiz_data["reponse_correcte"])
 
@@ -252,7 +256,7 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
             asyncio.create_task(envoyer_question_groupe(context, chat_id))
         return
     
-    # Attente calée dynamiquement sur le temps de la question
+    # Attente calée dynamiquement sur la durée de la question
     for _ in range(temps_allocation + 2):
         await asyncio.sleep(1)
         if chat_id not in GROUP_SESSIONS:  
@@ -302,7 +306,7 @@ async def start_quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
              f"✨ *Grand Marathon d'Évaluation Sans Répétition* ✨\n\n"
              f"Chaque épreuve s'adapte à votre niveau. Les questions déjà résolues lors des séances passées ne reviendront pas.\n\n"
              f"• Volume de l'épreuve : *{NOMBRE_TOTAL_QUESTIONS} Questions*\n"
-             f"• Temps de réflexion : *45s (Théorie) ou 60s (Cas Pratiques/Calculs)*\n\n"
+             f"• Temps de réflexion : *45s (Cours) ou 60s (Cas Pratiques/Calculs)*\n\n"
              "⚡ _Futures Sages-femmes et Maïeuticiens, préparez vos blocs-notes ! Début de l'épreuve..._\n\n"
              "🛠️ Commandes : /pause | /resume | /stop",
         parse_mode="Markdown"
@@ -394,7 +398,7 @@ def main():
     
     application.add_handler(PollAnswerHandler(recevoir_reponse_quiz))
 
-    logger.info("🤖 Bot INFAS Mémoire & Temps Réactif initialisé avec succès !")
+    logger.info("🤖 Bot INFAS Mémoire & Français Obstétrical Strict initialisé avec succès !")
     application.run_polling()
 
 
