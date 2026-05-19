@@ -30,98 +30,126 @@ groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # CONFIGURATION DU QUIZ
 GROUP_SESSIONS = {}
-TEMPS_PAR_QUESTION = 45  
 NOMBRE_TOTAL_QUESTIONS = 50  
+HISTORIQUE_FILE = "historique_questions.json"
 
-# BANQUE DE QUESTIONS DE SÉLECTION : 1ère ANNÉE SOINS OBSTÉRICAUX (INFAS)
+# BANQUE DE QUESTIONS : 1ère ANNÉE SOINS OBSTÉRICAUX (INFAS)
+# "temps": 45 pour les questions simples, 60 pour les cas pratiques/calculs
 QUESTIONS_INFAS_SVT = [
-    # --- ANATOMIE & PHYSIOLOGIE DU BASSIN ET DE L'APPAREIL GÉNITAL ---
     {
         "question": "[Anatomie] Quel diamètre du détroit supérieur (DS) mesure normalement 10,5 cm et constitue le diamètre utile ou chirurgical du bassin osseux ?",
         "options": ["Le diamètre conjugué anatomique", "Le diamètre promonto-rétro-pubien (PRP)", "Le diamètre diagonal", "Le diamètre transverse maximal"],
-        "reponse_correcte": 1
+        "reponse_correcte": 1,
+        "temps": 45
     },
     {
         "question": "[Anatomie] Quel muscle principal constitue le plancher pelvien postérieur (diaphragme pelvien) et soutient les organes génitaux ?",
         "options": ["Le muscle élévateur de l'anus (levator ani)", "Le muscle bulbo-spongieux", "Le muscle transverse profond", "Le muscle ischio-caverneux"],
-        "reponse_correcte": 0
+        "reponse_correcte": 0,
+        "temps": 45
     },
     {
         "question": "[Physiologie] Lors du cycle menstruel, quelle hormone hypophysaire est responsable du pic déclenchant l'ovulation vers le 14ème jour ?",
         "options": ["La Progestérone", "L'Oestradiol", "L'Hormone Lutéinisante (LH)", "L'Hormone Folliculo-Stimulante (FSH)"],
-        "reponse_correcte": 2
+        "reponse_correcte": 2,
+        "temps": 45
     },
     {
         "question": "[Physiologie] Où a lieu précisément la fécondation de l'ovocyte par le spermatozoïde dans l'appareil génital féminin ?",
         "options": ["Dans la cavité utérine", "Dans l'ampoule de la trompe de Fallope", "Au niveau de l'isthme utérin", "Dans le pavillon de la trompe"],
-        "reponse_correcte": 1
+        "reponse_correcte": 1,
+        "temps": 45
     },
-    
-    # --- OBSTÉTRIQUE ET SÉMIOLOGIE DE LA GROSSESSE NORMALE ---
     {
         "question": "[Obstétrique] À partir de quel repère anatomique précis mesure-t-on la hauteur utérine (HU) lors de l'examen clinique d'une femme enceinte ?",
         "options": ["L'ombilic", "L'appendice xiphoïde", "Le bord supérieur de la symphyse pubienne", "L'épine iliaque antéro-supérieure"],
-        "reponse_correcte": 2
+        "reponse_correcte": 2,
+        "temps": 45
     },
     {
         "question": "[Obstétrique] À combien de semaines d'aménorrhée (SA) correspond le terme théorique d'une grossesse normale en Côte d'Ivoire ?",
         "options": ["37 SA", "39 SA", "41 SA", "45 SA"],
-        "reponse_correcte": 2
+        "reponse_correcte": 2,
+        "temps": 45
     },
     {
         "question": "[Obstétrique] Quelle hormone, sécrétée par le syncytiotrophoblaste, maintient le corps jaune au début de la grossesse et sert de base aux tests de grossesse ?",
         "options": ["L'hCG (Hormone Chorionique Gonadotrope)", "L'hPL (Hormone Lactogène Placentaire)", "La Progestérone", "L'Oestriol"],
-        "reponse_correcte": 0
+        "reponse_correcte": 0,
+        "temps": 45
     },
-    
-    # --- CALCULS DE DOSES & PHARMACOLOGIE OBSTÉRICALE ---
     {
-        "question": "[Calculs] Prescription : Perfuser 5 UI d'Oxytocine (Syntocinon) dans 500 ml de Sérum Glucosé 5% en 4 heures. Quel est le débit de la perfusion en gouttes/minute ?",
+        "question": "[Calcul de Doses] Cas pratique : Perfuser 5 UI d'Oxytocine (Syntocinon) dans 500 ml de Sérum Glucosé 5% en 4 heures. Quel est le débit de la perfusion en gouttes/minute ?",
         "options": ["21 gouttes/min", "31 gouttes/min", "42 gouttes/min", "50 gouttes/min"],
-        "reponse_correcte": 2  # (500 ml * 20 gtts) / (4 * 60 min) = 10000 / 240 = 41.66 -> 42 gtts/min
+        "reponse_correcte": 2,
+        "temps": 60
     },
     {
-        "question": "[Calculs] Vous disposez d'une ampoule de Gluconate de Calcium à 10% de 10 ml. Combien de grammes de principe actif contient cette ampoule ?",
+        "question": "[Calcul de Doses] Vous disposez d'une ampoule de Gluconate de Calcium à 10% de 10 ml. Combien de grammes de principe actif contient cette ampoule ?",
         "options": ["0,1 g", "1 g", "10 g", "0,01 g"],
-        "reponse_correcte": 1  # 10% signifie 10g pour 100ml, donc 1g pour 10ml.
+        "reponse_correcte": 1,
+        "temps": 60
     },
-    
-    # --- SANTÉ DE LA REPRODUCTION (SR) ---
     {
         "question": "[Santé de la Reproduction] Selon les directives nationales, quel est l'intervalle minimum recommandé entre deux grossesses consécutives pour réduire les risques maternels ?",
         "options": ["6 mois", "12 mois", "24 mois (2 ans)", "36 mois"],
-        "reponse_correcte": 2
+        "reponse_correcte": 2,
+        "temps": 45
     },
     {
-        "question": "[SR] Quel outil de surveillance clinique permet de consigner les données de l'accouchement pour prévenir le travail prolongé ?",
+        "question": "[Santé de la Reproduction] Quel outil de surveillance clinique permet de consigner les données de l'accouchement pour prévenir le travail prolongé ?",
         "options": ["Le carnet de santé", "Le partogramme", "La fiche de CPN", "Le dossier infirmer"],
-        "reponse_correcte": 1
+        "reponse_correcte": 1,
+        "temps": 45
     }
 ]
 
+# FONCTIONS DE GESTION DE L'HISTORIQUE GLOBAL
+def charger_historique_global() -> list:
+    """Charge la liste des questions déjà posées historiquement."""
+    if os.path.exists(HISTORIQUE_FILE):
+        try:
+            with open(HISTORIQUE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Erreur lors du chargement de l'historique : {e}")
+    return []
 
-async def generer_quiz_groq() -> dict:
-    """Appelle l'API de Groq pour générer un QCM spécifique à la 1ère année en Soins Obstétricaux INFAS."""
+def sauvegarder_dans_historique_global(question_texte: str):
+    """Ajoute de façon permanente une question à l'historique."""
+    historique = charger_historique_global()
+    if question_texte not in historique:
+        historique.append(question_texte)
+        try:
+            with open(HISTORIQUE_FILE, "w", encoding="utf-8") as f:
+                json.dump(historique, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            logger.error(f"Erreur lors de la sauvegarde de l'historique : {e}")
+
+
+async def generer_quiz_groq(questions_exclues: list) -> dict:
+    """Appelle l'API de Groq pour générer un QCM inédit à 45s ou 60s."""
     if not groq_client:
         logger.error("Client Groq non initialisé.")
         return None
         
+    exclues_str = "\n".join([f"- {q}" for q in questions_exclues[-20:]]) # Lui donner les dernières questions pour l'orienter
+        
     system_prompt = (
         "Tu es un formateur expert à l'INFAS, spécialisé dans la filière Soins Obstétricaux (Sages-femmes / Maïeuticiens).\n"
-        "Tu prépares un examen d'évaluation de fin de semestre pour les étudiants de Première Année (Évaluation Théorique et Pratique).\n\n"
+        "Tu prépares une évaluation pour les étudiants de Première Année.\n\n"
         "Tu dois impérativement répondre sous la forme d'un objet JSON contenant exactement ces clés :\n"
         "- 'question': La question posée sous forme de texte.\n"
         "- 'options': Un tableau contenant exactement 4 propositions de réponses.\n"
-        "- 'reponse_correcte': Un entier (0, 1, 2 ou 3) représentant l'index de la bonne réponse.\n\n"
-        "Les questions doivent correspondre rigoureusement aux modules enseignés en 1ère année d'obstétrique :\n"
-        "1. Anatomie obstétricale et Physiologie : Bassin osseux (détroit supérieur, moyen, inférieur), utérus, trompes, ovaires, cycle ovarien et menstruel, nidation.\n"
-        "2. Sémiologie et surveillance de la grossesse normale : Signes sympathiques de grossesse, calcul du terme (règle de Naegele), hauteur utérine, bruits du cœur foetal (BDCF).\n"
-        "3. Santé de la Reproduction (SR) : Planification familiale (méthodes contraceptives de base), Consultation Prénatale (CPN repositionnée), objectifs de réduction de la mortalité maternelle.\n"
-        "4. Calculs de doses obstétricaux : Débit de perfusions (en gouttes/minute), règles de trois appliquées aux dilutions d'ocytociques ou d'antiseptiques.\n\n"
-        "Utilise l'un de ces préfixes au début de la question : [Anatomie], [Physiologie], [Sémiologie Obstétricale], [Calcul de Doses] ou [Santé de la Reproduction].\n"
+        "- 'reponse_correcte': Un entier (0, 1, 2 ou 3) représentant l'index de la bonne réponse.\n"
+        "- 'temps': Un entier valant obligatoirement SOIT 45 (pour les questions de cours directes), SOIT 60 (pour les calculs de doses ou cas cliniques complexes).\n\n"
+        "Modules cibles : Anatomie du bassin osseux, physiologie du cycle menstruel, sémiologie de la grossesse normale, calculs de doses (perfusions oxytociques, dilutions), Santé de la Reproduction.\n\n"
+        "CRUCIAL : Ne génère PAS une question proche ou identique à celles-ci :\n"
+        f"{exclues_str}\n\n"
+        "Utilise l'un de ces préfixes : [Anatomie], [Physiologie], [Sémiologie Obstétricale], [Calcul de Doses] ou [Santé de la Reproduction].\n"
         "Renvoie uniquement le JSON brut, sans introduction ni conclusion."
     )
-    user_prompt = "Génère une question difficile de niveau 1ère année Soins Obstétricaux INFAS Côte d'Ivoire."
+    user_prompt = "Génère une question de niveau 1ère année Soins Obstétricaux INFAS. Choisis librement entre une question simple (45s) ou un cas pratique complexe (60s)."
 
     try:
         completion = groq_client.chat.completions.create(
@@ -131,7 +159,7 @@ async def generer_quiz_groq() -> dict:
                 {"role": "user", "content": user_prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.70
+            temperature=0.85 # Température légèrement augmentée pour favoriser la nouveauté
         )
         return json.loads(completion.choices[0].message.content.strip())
     except Exception as e:
@@ -140,12 +168,11 @@ async def generer_quiz_groq() -> dict:
 
 
 async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Sélectionne aléatoirement une question obstétricale locale ou bascule sur Groq."""
+    """Sélectionne ou génère une question non répétée et adapte le chrono."""
     if chat_id not in GROUP_SESSIONS:
         return
 
     session = GROUP_SESSIONS[chat_id]
-
     if session["status"] == "paused":
         return
 
@@ -161,55 +188,72 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
         parse_mode="Markdown"
     )
     
+    historique_global = charger_historique_global()
     quiz_data = None
-    questions_disponibles = [q for q in QUESTIONS_INFAS_SVT if q["question"] not in session["questions_utilisees"]]
     
-    if questions_disponibles and random.random() > 0.30:  
+    # Filtrer les questions locales qui n'ont JAMAIS été posées (séance actuelle ET anciennes séances)
+    questions_disponibles = [q for q in QUESTIONS_INFAS_SVT if q["question"] not in historique_global]
+    
+    if questions_disponibles and random.random() > 0.40:  
         quiz_data = random.choice(questions_disponibles)
-        session["questions_utilisees"].append(quiz_data["question"])
-        logger.info(f"Question obstétricale locale sélectionnée pour le groupe {chat_id}")
+        sauvegarder_dans_historique_global(quiz_data["question"])
+        logger.info(f"Question locale inédite sélectionnée pour le groupe {chat_id}")
     else:
-        logger.info("Génération d'une question obstétricale personnalisée via Groq IA.")
-        quiz_data = await generer_quiz_groq()
+        logger.info("Génération d'une question inédite via Groq IA.")
+        # On passe l'historique à l'IA pour qu'elle n'invente pas un doublon
+        quiz_data = await generer_quiz_groq(historique_global)
         if quiz_data:
-            session["questions_utilisees"].append(quiz_data["question"])
+            # Vérification de sécurité si l'IA génère malgré tout un doublon historique
+            if quiz_data["question"] in historique_global:
+                logger.warning("L'IA a généré une question déjà existante. Tentative de repli.")
+                quiz_data = None
+            else:
+                sauvegarder_dans_historique_global(quiz_data["question"])
 
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=msg_attente.message_id)
     except Exception:
         pass
 
+    # Système de secours si l'IA échoue ou donne un doublon
     if not quiz_data:
         if questions_disponibles:
             quiz_data = random.choice(questions_disponibles)
-            session["questions_utilisees"].append(quiz_data["question"])
+            sauvegarder_dans_historique_global(quiz_data["question"])
         else:
-            await context.bot.send_message(chat_id=chat_id, text="⚠️ Erreur d'analyse, transition vers l'évaluation suivante...")
-            await asyncio.sleep(2)
-            if chat_id in GROUP_SESSIONS:
-                asyncio.create_task(envoyer_question_groupe(context, chat_id))
-            return
-
+            # Si TOUTES les questions locales ont été épuisées à travers le temps
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                text="⚠️ La banque de questions locale est saturée d'anciens sujets. Génération forcée d'une nouvelle situation clinique..."
+            )
+            # Retentative unique avec l'IA
+            quiz_data = await generer_quiz_groq(historique_global)
+            if not quiz_data:
+                # Secours ultime (on pioche n'importe où pour ne pas bloquer le bot)
+                quiz_data = random.choice(QUESTIONS_INFAS_SVT)
+                
+    # Récupération et application du temps dynamique (45 ou 60 secondes)
+    temps_allocation = int(quiz_data.get("temps", 45))
     session["correct_option_id"] = int(quiz_data["reponse_correcte"])
 
     try:
         await context.bot.send_poll(
             chat_id=chat_id,
-            question=f"🤰 [Q.{session['current_quiz_index']}/{session['total_questions']}] {quiz_data['question']}"[:300],
+            question=f"🤰 [Q.{session['current_quiz_index']}/{session['total_questions']}] ({temps_allocation}s) {quiz_data['question']}"[:300],
             options=[opt[:100] for opt in quiz_data["options"]],
             correct_option_id=session["correct_option_id"],
             type="quiz",
             is_anonymous=False,
-            open_period=TEMPS_PAR_QUESTION
+            open_period=temps_allocation
         )
     except Exception as e:
-        logger.error(f"Erreur lors de l'envoi du QCM obstétrical : {e}")
+        logger.error(f"Erreur lors de l'envoi du QCM : {e}")
         if chat_id in GROUP_SESSIONS:
             asyncio.create_task(envoyer_question_groupe(context, chat_id))
         return
     
-    # Surveillance active seconde par seconde
-    for _ in range(TEMPS_PAR_QUESTION + 2):
+    # Attente calée dynamiquement sur le temps de la question
+    for _ in range(temps_allocation + 2):
         await asyncio.sleep(1)
         if chat_id not in GROUP_SESSIONS:  
             return
@@ -221,7 +265,7 @@ async def envoyer_question_groupe(context: ContextTypes.DEFAULT_TYPE, chat_id: i
 
 
 async def recevoir_reponse_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enregistre les points des étudiants."""
+    """Enregistre les points des étudiants en direct."""
     answer = update.poll_answer
     
     for chat_id, session in GROUP_SESSIONS.items():
@@ -238,7 +282,7 @@ async def recevoir_reponse_quiz(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def start_quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lance le grand contrôle continu des Soins Obstétricaux."""
+    """Lance le grand contrôle continu sans répétition."""
     chat_id = update.effective_chat.id
     
     if chat_id in GROUP_SESSIONS:
@@ -249,18 +293,17 @@ async def start_quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "scores": {},
         "current_quiz_index": 0,
         "total_questions": NOMBRE_TOTAL_QUESTIONS,
-        "questions_utilisees": [],
         "status": "running"
     }
     
     await context.bot.send_message(
         chat_id=chat_id,
         text=f"👶 *INFAS 1ère Année — Filière Soins Obstétricaux* 👶\n"
-             f"✨ *Grand Marathon d'Évaluation Clinique & Théorique* ✨\n\n"
-             f"Sujets conformes aux modules de base : Anatomie du bassin, Cycles ovariens, Sémiologie de la grossesse normale et Calculs de doses.\n\n"
+             f"✨ *Grand Marathon d'Évaluation Sans Répétition* ✨\n\n"
+             f"Chaque épreuve s'adapte à votre niveau. Les questions déjà résolues lors des séances passées ne reviendront pas.\n\n"
              f"• Volume de l'épreuve : *{NOMBRE_TOTAL_QUESTIONS} Questions*\n"
-             f"• Temps de réflexion : *{TEMPS_PAR_QUESTION} secondes* par dossier.\n\n"
-             "⚡ _Futures Sages-femmes et Maïeuticiens, concentrez-vous ! Début de la première épreuve clinique..._\n\n"
+             f"• Temps de réflexion : *45s (Théorie) ou 60s (Cas Pratiques/Calculs)*\n\n"
+             "⚡ _Futures Sages-femmes et Maïeuticiens, préparez vos blocs-notes ! Début de l'épreuve..._\n\n"
              "🛠️ Commandes : /pause | /resume | /stop",
         parse_mode="Markdown"
     )
@@ -297,7 +340,7 @@ async def resume_quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
         
     session["status"] = "running"
-    await update.message.reply_text("▶️ *Reprise du contrôle continu !* Chargement du cas obstétrical suivant...")
+    await update.message.reply_text("▶️ *Reprise du contrôle continu !* Chargement du cas suivant...")
     asyncio.create_task(envoyer_question_groupe(context, chat_id))
 
 
@@ -308,7 +351,7 @@ async def stop_quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Pas de session active à stopper.")
         return
         
-    await update.message.reply_text("🛑 *Fin prématurée de l'épreuve.* Ramassage immédiat des copies...")
+    await update.message.reply_text("🛑 *Fin prématurée de l'épreuve.* Tri et correction des copies...")
     await afficher_classement_final(context, chat_id)
 
 
@@ -351,7 +394,7 @@ def main():
     
     application.add_handler(PollAnswerHandler(recevoir_reponse_quiz))
 
-    logger.info("🤖 Bot INFAS Soins Obstétricaux 1ère Année démarré avec succès !")
+    logger.info("🤖 Bot INFAS Mémoire & Temps Réactif initialisé avec succès !")
     application.run_polling()
 
 
