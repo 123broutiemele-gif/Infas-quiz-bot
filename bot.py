@@ -2,9 +2,8 @@ import os
 import json
 import logging
 import asyncio
-import re
 from telegram import Update
-from telegram.ext import Application, CommandHandler, PollAnswerHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes
 from groq import Groq
 
 # Configuration des logs
@@ -14,84 +13,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# CONFIGURATION ET ENVIRONNEMENT
+# CONFIGURATION
 TELEGRAM_TOKEN = os.getenv("TOKEN") or os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-if not TELEGRAM_TOKEN:
-    raise ValueError("Le TOKEN de Telegram est manquant dans les variables d'environnement.")
-if not GROQ_API_KEY:
-    raise ValueError("La clé GROQ_API_KEY est manquante dans les variables d'environnement.")
+if not TELEGRAM_TOKEN or not GROQ_API_KEY:
+    raise ValueError("Les variables d'environnement TOKEN ou GROQ_API_KEY sont manquantes.")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# CONSTANTES DU QUIZ
+# CONSTANTES
 QUESTIONS_PAR_QUIZ = 25
-FICHIER_HISTORIQUE = "historique_questions.json"
 GROUP_SESSIONS = {}
-
-# GESTION DE L'HISTORIQUE DES QUESTIONS (Anti-répétition persistante)
-def charger_historique() -> list:
-    if os.path.exists(FICHIER_HISTORIQUE):
-        try:
-            with open(FICHIER_HISTORIQUE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Erreur lors du chargement de l'historique : {e}")
-    return []
-
-def sauvegarder_dans_historique(question_text: str):
-    historique = charger_historique()
-    # Nettoyage basique pour comparaison
-    clean_text = question_text.strip().lower()
-    if clean_text not in historique:
-        historique.append(clean_text)
-        try:
-            with open(FICHIER_HISTORIQUE, "w", encoding="utf-8") as f:
-                json.dump(historique, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            logger.error(f"Erreur lors de la sauvegarde de l'historique : {e}")
 
 # ADAPTATION DU TEMPS DE RÉPONSE
 def calculer_temps_reponse(question_data: dict) -> int:
-    """ Calcule le temps requis selon le volume de texte et la complexité. """
     texte_total = question_data["question"] + " ".join(question_data["options"])
     nombre_mots = len(texte_total.split())
-    
-    # Temps de base : 20 secondes
-    temps = 20
-    # On ajoute du temps pour la lecture (approx 1.5s par tranche de 5 mots)
-    temps += int(nombre_mots / 5) * 1.5
-    
-    # Bonus de complexité si des termes médicaux lourds ou calculs sont détectés
-    mots_complexes = ["calculer", "concentration", "posologie", "osmose", "génétique", "dilution", "cycle"]
-    if any(mot in texte_total.lower() for mot in mots_complexes):
-        temps += 10
-        
-    # Limites de sécurité (entre 20 et 50 secondes maximum pour un sondage Telegram)
-    return min(max(int(temps), 20), 50)
-
+    # Temps de base 20s + lecture
+    temps = 20 + (int(nombre_mots / 5) * 1.5)
+    # Bonus pour la technicité obstétricale
+    return min(max(int(temps), 25), 60)
 
 # GÉNÉRATION DE QUESTION VIA GROQ (IA)
-async def generer_question_infas_ia() -> dict:
-    """Appelle Groq en lui injectant l'historique pour exclure les doublons."""
-    historique = charger_historique()
+async def generer_question_obstetrique_ia() -> dict:
+    """Génère une question sur les soins obstétricaux via Groq."""
     
-    # On ne passe que les 30 dernières questions pour ne pas saturer le contexte du prompt
-    historique_recent = historique[-30:] if len(historique) > 30 else historique
-    exclusions = "\n".join([f"- {q}" for q in historique_recent])
-
     system_prompt = (
-        "Tu es un concepteur officiel du concours d'entrée à l'INFAS en Côte d'Ivoire.\n"
-        "Génère une question de QCM réaliste, rigoureuse et du niveau exact des épreuves des années 2010 à 2025.\n"
-        "Domaines cibles : Anatomie-Physiologie (SVT), Santé Publique, Culture Générale Médicale, Secourisme ou Initiation à la Pharmacologie.\n\n"
-        "Tu dois impérativement répondre sous la forme d'un objet JSON contenant exactement ces clés :\n"
+        "Tu es un expert en enseignement des soins obstétricaux. "
+        "Génère une question de QCM de niveau académique pour étudiants en santé/sage-femme. "
+        "Domaines : Suivi de grossesse, accouchement, soins post-partum, complications obstétricales, néonatologie de base, hygiène en milieu de maternité.\n\n"
+        "Tu dois répondre sous la forme d'un objet JSON strict :\n"
         "- 'question': Le texte de la question.\n"
-        "- 'options': Un tableau de strictement 4 propositions de réponses.\n"
-        "- 'reponse_correcte': Un entier (0, 1, 2 ou 3) représentant l'index de la bonne réponse.\n\n"
-        f"CRITÈRE ABSOLU : Ne génère PAS une question ressemblant à celles-ci :\n{exclusions}\n"
-        "Renvoie uniquement l'objet JSON pur, sans aucun texte avant ou après."
+        "- 'options': Un tableau de 4 propositions de réponses.\n"
+        "- 'reponse_correcte': Un entier (0, 1, 2 ou 3).\n\n"
+        "Critère : La question doit être inédite, variée, et directement liée aux soins obstétricaux."
     )
 
     try:
@@ -99,70 +56,55 @@ async def generer_question_infas_ia() -> dict:
             model=GROQ_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Génère une question de niveau concours INFAS d'Afrique de l'Ouest."}
+                {"role": "user", "content": "Génère une nouvelle question de QCM sur les soins obstétricaux."}
             ],
             response_format={"type": "json_object"},
-            temperature=0.85 # Température légèrement augmentée pour maximiser la variété
+            temperature=0.7
         )
-        
-        quiz_data = json.loads(completion.choices[0].message.content.strip())
-        return quiz_data
+        return json.loads(completion.choices[0].message.content.strip())
     except Exception as e:
         logger.error(f"Erreur de génération Groq : {e}")
         return None
 
-
-# FONCTION PRINCIPALE : ENVOI DE LA QUESTION ET SÉQUENCE
+# ORCHESTRATION
 async def orchestrer_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    if chat_id not in GROUP_SESSIONS:
+    if chat_id not in GROUP_SESSIONS or GROUP_SESSIONS[chat_id]["status"] != "running":
         return
 
     session = GROUP_SESSIONS[chat_id]
-    
-    if session["status"] != "running":
-        return
-
     session["current_index"] += 1
 
-    # Fin du quiz à 25 questions
     if session["current_index"] > QUESTIONS_PAR_QUIZ:
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🏁 *Fin du Quiz spécial Annales INFAS !*\nFélicitations aux participants. Tapez `/infas` pour démarrer une nouvelle session de {QUESTIONS_PAR_QUIZ} questions uniques."
+            text="🏁 *Fin du Quiz spécial Soins Obstétricaux !*\nBravo pour vos révisions."
         )
         GROUP_SESSIONS.pop(chat_id, None)
         return
 
-    # Message d'attente pendant la génération Groq
     msg_attente = await context.bot.send_message(
         chat_id=chat_id,
-        text=f"🔄 _Groq génère une question inédite (Question {session['current_index']}/{QUESTIONS_PAR_QUIZ})..._"
+        text=f"🔄 _Génération de la question {session['current_index']}/{QUESTIONS_PAR_QUIZ}..._"
     )
 
-    quiz_data = await generer_question_infas_ia()
+    quiz_data = await generer_question_obstetrique_ia()
     
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=msg_attente.message_id)
-    except Exception:
-        pass
+    except: pass
 
     if not quiz_data or "question" not in quiz_data:
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ Erreur de communication avec Groq. Nouvelle tentative...")
         session["current_index"] -= 1
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
         asyncio.create_task(orchestrer_quiz(context, chat_id))
         return
 
-    # Sauvegarde immédiate dans l'historique global pour éviter les doublons futurs
-    sauvegarder_dans_historique(quiz_data["question"])
-
-    # Calcul dynamique de la durée de la question
     duree_sondage = calculer_temps_reponse(quiz_data)
 
     try:
         await context.bot.send_poll(
             chat_id=chat_id,
-            question=f"❓ [INFAS {session['current_index']}/{QUESTIONS_PAR_QUIZ}] {quiz_data['question']}"[:300],
+            question=f"❓ [Obstétrique {session['current_index']}/{QUESTIONS_PAR_QUIZ}] {quiz_data['question']}"[:300],
             options=[opt[:100] for opt in quiz_data["options"]],
             correct_option_id=int(quiz_data["reponse_correcte"]),
             type="quiz",
@@ -170,72 +112,33 @@ async def orchestrer_quiz(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
             open_period=duree_sondage
         )
     except Exception as e:
-        logger.error(f"Erreur d'envoi du sondage Telegram : {e}")
-        asyncio.create_task(orchestrer_quiz(context, chat_id))
-        return
+        logger.error(f"Erreur d'envoi Telegram : {e}")
 
-    # Attente dynamique et réactive seconde par seconde
-    for _ in range(duree_sondage + 3):
-        await asyncio.sleep(1)
-        if chat_id not in GROUP_SESSIONS or GROUP_SESSIONS[chat_id]["status"] != "running":
-            return
-
-    # Séquence suivante
+    await asyncio.sleep(duree_sondage + 2)
     asyncio.create_task(orchestrer_quiz(context, chat_id))
 
-
-# COMMANDES DU BOT
+# COMMANDES
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "👋 *Bienvenue sur le Bot de révision INFAS automatique !*\n\n"
-        "Ce bot utilise l'IA Groq pour extraire et modéliser des questions basées sur les *anciens sujets du concours INFAS (2010 à 2025)*.\n\n"
-        "💡 *Règles du jeu :*\n"
-        f"• Chaque quiz comporte exactement `{QUESTIONS_PAR_QUIZ} questions`.\n"
-        "• Le temps de réponse s'ajuste automatiquement selon la longueur de la question.\n"
-        "• Une question posée ne réapparaît *jamais*, d'une session à l'autre.\n\n"
-        "➡️ Tapez `/infas` dans votre groupe ou en privé pour lancer un quiz."
+    await update.message.reply_text(
+        "👋 *Bot de Révision : Soins Obstétricaux*\n\n"
+        "Je génère des questions basées sur les meilleures pratiques en obstétrique.\n"
+        "Tapez `/start_obs` pour commencer une série de 25 questions."
     )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-async def cmd_infas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_start_obs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    
     if chat_id in GROUP_SESSIONS:
-        await update.message.reply_text("⚠️ Un quiz est déjà en cours dans ce tchat. Attendez qu'il se termine ou tapez `/stop_infas`.")
+        await update.message.reply_text("Un quiz est déjà en cours.")
         return
 
-    # Initialisation de la session
-    GROUP_SESSIONS[chat_id] = {
-        "status": "running",
-        "current_index": 0
-    }
-
-    await update.message.reply_text(
-        f"🚀 *Démarrage d'un Quiz de {QUESTIONS_PAR_QUIZ} questions (Annales INFAS 2010-2025).*\n"
-        "Soyez prêts, la première question arrive..."
-    )
-    
+    GROUP_SESSIONS[chat_id] = {"status": "running", "current_index": 0}
+    await update.message.reply_text("🚀 Quiz obstétrique lancé !")
     asyncio.create_task(orchestrer_quiz(context, chat_id))
 
-async def cmd_stop_infas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if chat_id in GROUP_SESSIONS:
-        GROUP_SESSIONS.pop(chat_id, None)
-        await update.message.reply_text("🛑 *Le quiz a été arrêté.* Toutes les questions sauvegardées jusqu'ici ne reviendront plus.")
-    else:
-        await update.message.reply_text("Aucun quiz n'est actif actuellement.")
-
-
-# MAIN EXECUTION
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # Handlers de commandes
     application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(CommandHandler("infas", cmd_infas))
-    application.add_handler(CommandHandler("stop_infas", cmd_stop_infas))
-
-    logger.info("Bot Annales INFAS démarré et prêt.")
+    application.add_handler(CommandHandler("start_obs", cmd_start_obs))
     application.run_polling()
 
 if __name__ == "__main__":
